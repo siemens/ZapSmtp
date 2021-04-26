@@ -1,0 +1,17 @@
+# Goland (developer-specific stuff)
+.idea/workspace.xml
+
+# Custom certificates
+*.pem
+!cert1.pem
+!cert2.pem
+!key1.pem
+!key2.pem
+*.der
+!cert1.der
+!cert2.der
+!key1.der
+!key2.der
+
+# Sample JSON configs
+*.json
