@@ -42,6 +42,8 @@ func Test_example(t *testing.T) {
 		time.Minute*5,
 		_test.Server,
 		_test.Port,
+		_test.Username,
+		_test.Password,
 		"Example Logger",
 		_test.Sender,
 		[]mail.Address{_test.Recipient},

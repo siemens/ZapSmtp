@@ -41,6 +41,8 @@ func initSmtpCore(
 	delayPriority time.Duration,
 	server string,
 	port uint16,
+	username string, // Leave empty to skip authentication
+	password string, // Leave empty to skip authentication
 	subject string,
 	sender mail.Address,
 	recipients []mail.Address,
@@ -55,6 +57,8 @@ func initSmtpCore(
 	sink, errSink := smtp.NewWriteSyncCloser(
 		server,
 		port,
+		username,
+		password,
 		subject,
 		sender,
 		recipients,

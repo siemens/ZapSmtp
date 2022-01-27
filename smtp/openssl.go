@@ -127,6 +127,8 @@ func PrepareEncryptionKeys(
 func SendMail(
 	server string,
 	port uint16,
+	username string, // Leave empty to skip authentication
+	password string, // Leave empty to skip authentication
 	from mail.Address,
 	to []mail.Address,
 	subject string,
@@ -182,10 +184,16 @@ func SendMail(
 		}
 	}
 
+	// Set authentication if desired
+	var auth smtp.Auth
+	if len(username) > 0 && len(password) > 0 {
+		auth = smtp.PlainAuth("", username, password, server)
+	}
+
 	// Connect to the server, authenticate, set the sender and recipient and send the email all in one step.
 	errSend := smtp.SendMail(
 		fmt.Sprintf("%s:%d", server, port),
-		nil,
+		auth,
 		from.Address,
 		toAddrs,
 		messageRaw,
@@ -202,6 +210,8 @@ func SendMail(
 func SendMail2(
 	server string,
 	port uint16,
+	username string, // Leave empty to skip authentication
+	password string, // Leave empty to skip authentication
 	from mail.Address,
 	to []mail.Address,
 	subject string,
@@ -266,6 +276,8 @@ func SendMail2(
 	return SendMail(
 		server,
 		port,
+		username,
+		password,
 		from,
 		to,
 		subject,
@@ -282,6 +294,8 @@ func SendMail2(
 func SendMail3(
 	server string,
 	port uint16,
+	username string, // Leave empty to skip authentication
+	password string, // Leave empty to skip authentication
 	from mail.Address,
 	to []mail.Address,
 	subject string,
@@ -297,6 +311,8 @@ func SendMail3(
 	return SendMail2(
 		server,
 		port,
+		username,
+		password,
 		from,
 		to,
 		subject,

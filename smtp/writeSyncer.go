@@ -21,6 +21,8 @@ import (
 type writeSyncer struct {
 	server      string
 	port        uint16
+	username    string // Leave empty to skip authentication
+	password    string // Leave empty to skip authentication
 	from        mail.Address
 	to          []mail.Address
 	subject     string
@@ -42,6 +44,8 @@ type writeSyncer struct {
 func NewWriteSyncer(
 	host string,
 	port uint16,
+	username string, // Leave empty to skip authentication
+	password string, // Leave empty to skip authentication
 	subject string,
 	sender mail.Address,
 	recipients []mail.Address,
@@ -150,6 +154,8 @@ func NewWriteSyncer(
 	return &writeSyncer{
 		server:      host,
 		port:        port,
+		username:    username,
+		password:    password,
 		from:        sender,
 		to:          recipients,
 		subject:     subject,
@@ -172,6 +178,8 @@ func (s *writeSyncer) Write(p []byte) (int, error) {
 	err := SendMail2(
 		s.server,
 		s.port,
+		s.username,
+		s.password,
 		s.from,
 		s.to,
 		s.subject,

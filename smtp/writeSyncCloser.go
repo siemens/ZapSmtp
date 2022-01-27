@@ -31,6 +31,8 @@ type writeSyncCloser struct {
 func NewWriteSyncCloser(
 	host string,
 	port uint16,
+	username string, // Leave empty to skip authentication
+	password string, // Leave empty to skip authentication
 	subject string,
 	sender mail.Address,
 	recipients []mail.Address,
@@ -44,6 +46,8 @@ func NewWriteSyncCloser(
 	ws, err := NewWriteSyncer(
 		host,
 		port,
+		username,
+		password,
 		subject,
 		sender,
 		recipients,
@@ -109,6 +113,8 @@ func (s *writeSyncCloser) Write(p []byte) (int, error) {
 	err := SendMail(
 		s.server,
 		s.port,
+		s.username,
+		s.password,
 		s.from,
 		s.to,
 		s.subject,

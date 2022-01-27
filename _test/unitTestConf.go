@@ -19,6 +19,8 @@ var (
 	// Need to configure these before testing!
 	Server             = "mail.domain.tld"
 	Port        uint16 = 25
+	Username           = "" // Leave empty to skip authentication
+	Password           = "" // Leave empty to skip authentication
 	OpensslPath        = ""
 
 	// Can optionally be set
