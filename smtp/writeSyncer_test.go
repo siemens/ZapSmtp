@@ -95,6 +95,8 @@ func TestNewSmtpWriteSyncer(t *testing.T) {
 				"",
 				0,
 				"",
+				"",
+				"",
 				tt.args.sender,
 				tt.args.recipients,
 				tt.args.opensslPath,

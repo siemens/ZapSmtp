@@ -590,6 +590,8 @@ func Test_sendMail(t *testing.T) {
 		msg         []byte
 		server      string
 		port        uint16
+		username    string
+		password    string
 		subject     string
 		from        mail.Address
 		to          []mail.Address
@@ -603,17 +605,17 @@ func Test_sendMail(t *testing.T) {
 		args    args
 		wantErr bool
 	}{
-		{"valid", args{[]byte("valid email"), _test.Server, _test.Port, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, false},
-		{"valid-no-subject", args{[]byte("valid email, but no subject"), _test.Server, _test.Port, "", _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, false},
-		{"valid-no-message", args{[]byte(""), _test.Server, _test.Port, _test.Subject + " (no content inside)", _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, false},
-		{"valid-multiple-recipients", args{[]byte("valid email, sent to multiple recipients"), _test.Server, _test.Port, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}, {"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCertsDouble}, false},
-		{"valid-no-signing", args{[]byte("valid email, not signed"), _test.Server, _test.Port, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, "", "", toCerts}, false},
-		{"valid-no-encryption", args{[]byte("valid email, not encrypted"), _test.Server, _test.Port, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, []string{}}, false},
-		{"valid-plain", args{[]byte("valid email, not signed and not encrypted"), _test.Server, _test.Port, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, "", "", "", []string{}}, false},
+		{"valid", args{[]byte("valid email"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, false},
+		{"valid-no-subject", args{[]byte("valid email, but no subject"), _test.Server, _test.Port, _test.Username, _test.Password, "", _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, false},
+		{"valid-no-message", args{[]byte(""), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject + " (no content inside)", _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, false},
+		{"valid-multiple-recipients", args{[]byte("valid email, sent to multiple recipients"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}, {"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCertsDouble}, false},
+		{"valid-no-signing", args{[]byte("valid email, not signed"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, "", "", toCerts}, false},
+		{"valid-no-encryption", args{[]byte("valid email, not encrypted"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, []string{}}, false},
+		{"valid-plain", args{[]byte("valid email, not signed and not encrypted"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, "", "", "", []string{}}, false},
 
-		{"invalid-host", args{[]byte("some test message that should NOT be received"), "notexisting", _test.Port, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, true},
-		{"invalid-from", args{[]byte("some test message that should NOT be received"), _test.Server, _test.Port, _test.Subject, mail.Address{"Test", "notexisting@test.com"}, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, true},
-		{"invalid-to", args{[]byte("some test message that should NOT be received"), _test.Server, _test.Port, _test.Subject, _test.Sender, []mail.Address{{"Test", "notexisting@test.com"}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, true},
+		{"invalid-host", args{[]byte("some test message that should NOT be received"), "notexisting", _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, true},
+		{"invalid-from", args{[]byte("some test message that should NOT be received"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, mail.Address{"Test", "notexisting@test.com"}, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, true},
+		{"invalid-to", args{[]byte("some test message that should NOT be received"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", "notexisting@test.com"}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -621,6 +623,8 @@ func Test_sendMail(t *testing.T) {
 			err := SendMail(
 				tt.args.server,
 				tt.args.port,
+				tt.args.username,
+				tt.args.password,
 				tt.args.from,
 				tt.args.to,
 				tt.args.subject,
