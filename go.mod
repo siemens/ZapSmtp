@@ -1,4 +1,4 @@
-module zap-smtp
+module github.com/siemens/ZapSmtp
 
 go 1.14
 

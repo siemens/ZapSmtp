@@ -12,13 +12,13 @@ package example
 
 import (
 	"fmt"
+	"github.com/siemens/ZapSmtp/cores"
+	"github.com/siemens/ZapSmtp/smtp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"net/mail"
 	"os"
 	"time"
-	"zap-smtp/cores"
-	"zap-smtp/smtp"
 )
 
 // InitConsoleCore creates a new core for logging to the console according to the provided configuration

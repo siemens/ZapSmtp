@@ -11,13 +11,13 @@
 package smtp
 
 import (
+	"github.com/siemens/ZapSmtp/_test"
 	"io/ioutil"
 	"net/mail"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
-	"zap-smtp/_test"
 )
 
 // Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can

@@ -11,12 +11,12 @@
 package example
 
 import (
+	"github.com/siemens/ZapSmtp/_test"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"net/mail"
 	"testing"
 	"time"
-	"zap-smtp/_test"
 )
 
 func Test_example(t *testing.T) {

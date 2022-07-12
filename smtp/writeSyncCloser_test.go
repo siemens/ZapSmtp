@@ -11,13 +11,13 @@
 package smtp
 
 import (
+	"github.com/siemens/ZapSmtp/_test"
 	"io/ioutil"
 	"net/mail"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
-	"zap-smtp/_test"
 )
 
 // Basically the same test as TestNewSmtpWriteSyncer but it will also check for the correct creation and removal of the

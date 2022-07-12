@@ -12,6 +12,7 @@ package smtp
 
 import (
 	"bytes"
+	"github.com/siemens/ZapSmtp/_test"
 	"io/ioutil"
 	"net/mail"
 	"os/exec"
@@ -20,7 +21,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"zap-smtp/_test"
 )
 
 func Test_convertSignatureParameters(t *testing.T) {
