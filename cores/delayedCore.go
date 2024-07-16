@@ -169,7 +169,7 @@ func (c *delayedCore) Sync() error {
 	c.mutex.Lock()
 
 	// Combine the priority and standard messages and prepend a nice header.
-	msg := make([]byte, 0, 1024*(len(c.entriesBuf)+len(c.entriesBuf))) // Assume a default log size of 1 KiB
+	msg := make([]byte, 0, 1024*(len(c.entriesPriorityBuf)+len(c.entriesBuf))) // Assume a default log size of 1 KiB
 	if len(c.entriesPriorityBuf) > 0 {
 		msg = append(msg, []byte("=== Priority Log ===\n")...)
 		for _, buf := range c.entriesPriorityBuf {
