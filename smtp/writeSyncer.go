@@ -13,7 +13,6 @@ package smtp
 import (
 	"fmt"
 	"go.uber.org/zap/zapcore"
-	"io/ioutil"
 	"net/mail"
 	"os"
 )
@@ -33,14 +32,14 @@ type writeSyncer struct {
 	tempDir     string
 }
 
-// NewWriteSyncer returns a zap.WriteSyncer. It will safe the needed certificate and key files every time a mail
-// is sent out and remove them again immediately afterwards. Some remarks for the parameters:
-// - The first five parameters must always be set.
-// - All the key and certificate files MUST NOT be password protected.
-// - All the key and certificate files MUST BE in either PEM or DER format.
-// - If neither key nor certificates files are provided the opensslPath and tempDir won't be used.
-// - If recipientCerts are provided the amount must match the number of recipients. The order does not matter though. It
-//   is not possible to encrypt the message for only a subset of recipients.
+// NewWriteSyncer returns a zap.WriteSyncer. It will save the needed certificate and key files every time a mail
+// is sent out and remove them again immediately afterward. Some remarks for the parameters:
+//   - The first five parameters must always be set.
+//   - All the key and certificate files MUST NOT be password protected.
+//   - All the key and certificate files MUST BE in either PEM or DER format.
+//   - If neither key nor certificates files are provided the opensslPath and tempDir won't be used.
+//   - If recipientCerts are provided the amount must match the number of recipients. The order does not matter though.
+//     It is not possible to encrypt the message for only a subset of recipients.
 func NewWriteSyncer(
 	host string,
 	port uint16,
@@ -115,11 +114,11 @@ func NewWriteSyncer(
 	if len(senderCert) > 0 && len(senderKey) > 0 {
 
 		// Load signature certificate and key
-		fromCert, err = ioutil.ReadFile(senderCert)
+		fromCert, err = os.ReadFile(senderCert)
 		if err != nil {
 			return nil, fmt.Errorf("could not load sender certificate: %s", err)
 		}
-		fromKey, err = ioutil.ReadFile(senderKey)
+		fromKey, err = os.ReadFile(senderKey)
 		if err != nil {
 			return nil, fmt.Errorf("could not load sender key: %s", err)
 		}
@@ -136,7 +135,7 @@ func NewWriteSyncer(
 
 		// Load encryption keys
 		for _, recipientCert := range recipientCerts {
-			toCert, errLoad := ioutil.ReadFile(recipientCert)
+			toCert, errLoad := os.ReadFile(recipientCert)
 			if errLoad != nil {
 				return nil, fmt.Errorf("could not load recipient certificate: %s", errLoad)
 			}

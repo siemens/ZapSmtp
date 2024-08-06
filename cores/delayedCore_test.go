@@ -138,7 +138,7 @@ func TestDelayedCore(t *testing.T) {
 		"=== Standard Log ===\n" +
 		`{"level":"info","msg":"info","k":1,"k":3}` + "\n")
 
-	logged, errRead := ioutil.ReadFile(temp.Name())
+	logged, errRead := os.ReadFile(temp.Name())
 	if errRead != nil {
 		t.Errorf("failed to read from temp file: %s", errRead)
 		return

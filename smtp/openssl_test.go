@@ -13,8 +13,8 @@ package smtp
 import (
 	"bytes"
 	"github.com/siemens/ZapSmtp/_test"
-	"io/ioutil"
 	"net/mail"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -50,12 +50,12 @@ func Test_convertSignatureParameters(t *testing.T) {
 	cert2Pem := filepath.Join(root, _test.TestDir, cert2+".pem")
 	cert2Der := filepath.Join(root, _test.TestDir, cert2+".der")
 
-	wantCert, err := ioutil.ReadFile(certPem)
+	wantCert, err := os.ReadFile(certPem)
 	if err != nil {
 		t.Errorf("unable load cert: %s", err)
 		return
 	}
-	wantKey, err := ioutil.ReadFile(keyPem)
+	wantKey, err := os.ReadFile(keyPem)
 	if err != nil {
 		t.Errorf("unable load key: %s", err)
 		return
@@ -93,24 +93,24 @@ func Test_convertSignatureParameters(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			// Load signature certificate and key
-			fromCert, errLoadCert := ioutil.ReadFile(tt.args.senderCert)
+			fromCert, errLoadCert := os.ReadFile(tt.args.senderCert)
 			if errLoadCert != nil && tt.args.senderCert != "" {
 				t.Errorf("could not load sender certificate: %s", errLoadCert)
 				return
 			}
-			fromKey, errLoadKey := ioutil.ReadFile(tt.args.senderKey)
+			fromKey, errLoadKey := os.ReadFile(tt.args.senderKey)
 			if errLoadKey != nil && tt.args.senderKey != "" {
 				t.Errorf("could not load sender key: %s", errLoadKey)
 				return
 			}
 
-			got, got1, err := PrepareSignatureKeys(
+			got, got1, errPrep := PrepareSignatureKeys(
 				tt.args.openSslPath,
 				fromCert,
 				fromKey,
 			)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("PrepareSignatureKeys() error = %v, wantErr %v", err, tt.wantErr)
+			if (errPrep != nil) != tt.wantErr {
+				t.Errorf("PrepareSignatureKeys() error = %v, wantErr %v", errPrep, tt.wantErr)
 			}
 
 			// Unify the line feed (on windows it is []byte{13 10})
@@ -151,12 +151,12 @@ func Test_convertEncryptionParameters(t *testing.T) {
 	cert2Pem := filepath.Join(root, _test.TestDir, cert2+".pem")
 	cert2Der := filepath.Join(root, _test.TestDir, cert2+".der")
 
-	wantCert1, err := ioutil.ReadFile(cert1Pem)
+	wantCert1, err := os.ReadFile(cert1Pem)
 	if err != nil {
 		t.Errorf("unable load cert 1: %s", err)
 		return
 	}
-	wantCert2, err2 := ioutil.ReadFile(cert2Pem)
+	wantCert2, err2 := os.ReadFile(cert2Pem)
 	if err2 != nil {
 		t.Errorf("unable load cert 2: %s", err2)
 		return
@@ -192,7 +192,7 @@ func Test_convertEncryptionParameters(t *testing.T) {
 			// Load encryption keys
 			toCerts := make([][]byte, 0, len(tt.args.toCerts))
 			for _, recipientCert := range tt.args.toCerts {
-				toCert, errLoad := ioutil.ReadFile(recipientCert)
+				toCert, errLoad := os.ReadFile(recipientCert)
 				if errLoad != nil && recipientCert != "" {
 					t.Errorf("could not load recipient certificate: %s", errLoad)
 					return
@@ -244,14 +244,14 @@ func Test_certToPem(t *testing.T) {
 	cert = filepath.Join(root, _test.TestDir, cert)
 
 	// Load certificates
-	certDer, errRead := ioutil.ReadFile(cert + ".der")
+	certDer, errRead := os.ReadFile(cert + ".der")
 	if errRead != nil {
 		t.Errorf("unable to read file '%s': %s", cert+".der", errRead)
 		return
 	}
-	certPem, errRead := ioutil.ReadFile(cert + ".pem")
-	if errRead != nil {
-		t.Errorf("unable to read file '%s': %s", cert+".pem", errRead)
+	certPem, errRead2 := os.ReadFile(cert + ".pem")
+	if errRead2 != nil {
+		t.Errorf("unable to read file '%s': %s", cert+".pem", errRead2)
 		return
 	}
 
@@ -311,12 +311,12 @@ func Test_keyToPem(t *testing.T) {
 	key = filepath.Join(root, _test.TestDir, key)
 
 	// Load Keys
-	keyDer, errRead := ioutil.ReadFile(key + ".der")
+	keyDer, errRead := os.ReadFile(key + ".der")
 	if errRead != nil {
 		t.Errorf("unable to read file '%s': %s", key+".der", errRead)
 		return
 	}
-	keyPem, errRead := ioutil.ReadFile(key + ".pem")
+	keyPem, errRead := os.ReadFile(key + ".pem")
 	if errRead != nil {
 		t.Errorf("unable to read file '%s': %s", key+".pem", errRead)
 		return

@@ -90,9 +90,9 @@ func (c *delayedCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcor
 func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 
 	// Encode the message
-	buf, err := c.enc.EncodeEntry(ent, fields)
-	if err != nil {
-		return err
+	buf, errEncode := c.enc.EncodeEntry(ent, fields)
+	if errEncode != nil {
+		return errEncode
 	}
 
 	// Request mutex to avoid sending out partial messages
@@ -109,7 +109,7 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 	}
 
 	// Update the timer duration if this is the first entry with a priority level. In case the timer has already
-	// expired, we would reset the it to a negative duration, because it is enforced that the priority delay is smaller
+	// expired, we would reset it to a negative duration, because it is enforced that the priority delay is smaller
 	// than the regular delay. A negative duration leads to the timer firing immediately.
 	if c.priority.Enabled(ent.Level) && len(c.entriesPriorityBuf) == 0 {
 		remainingDuration := c.delayPriority - time.Since(c.timeStart)
@@ -129,9 +129,9 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 	// Since we may be crashing the program, sync the output. Ignore Sync
 	// errors, pending a clean solution to issue #370.
 	if ent.Level > zapcore.ErrorLevel {
-		err := c.Sync()
-		if err != nil {
-			return err
+		errSync := c.Sync()
+		if errSync != nil {
+			return errSync
 		}
 	}
 
@@ -140,9 +140,9 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 		go func() {
 			<-c.timer.C
 
-			err := c.Sync()
-			if err != nil {
-				c.errCh <- err
+			errSync := c.Sync()
+			if errSync != nil {
+				c.errCh <- errSync
 			}
 		}()
 	}
@@ -199,9 +199,8 @@ func (c *delayedCore) Sync() error {
 	c.mutex.Unlock()
 
 	_, err := c.out.Write(msg)
-
 	if err != nil {
-		// Store message to be picked up by next call to core's Write method
+		// Stored message to be picked up by next call to core's Write method
 		return err
 	}
 
