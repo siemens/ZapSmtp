@@ -108,10 +108,18 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 		startRoutine = true
 	}
 
-	// Update the timer duration if this is the first entry with a priority level. In case the timer has already
-	// expired, we would reset it to a negative duration, because it is enforced that the priority delay is smaller
-	// than the regular delay. A negative duration leads to the timer firing immediately.
-	if c.priority.Enabled(ent.Level) && len(c.entriesPriorityBuf) == 0 {
+	// Check whether timer needs to execute sooner
+	if len(c.entriesBuf)+len(c.entriesPriorityBuf) >= 1000 {
+
+		// Cached messages are getting too much, SMTP delivery might not be guaranteed anymore, send messages now.
+		// A negative duration leads to the timer firing immediately.
+		c.timer.Reset(-1)
+
+	} else if c.priority.Enabled(ent.Level) && len(c.entriesPriorityBuf) == 0 {
+
+		// Update the timer duration if this is the first entry with a priority level. In case the timer has already
+		// expired, we would reset it to a negative duration, because it is enforced that the priority delay is smaller
+		// than the regular delay. A negative duration leads to the timer firing immediately.
 		remainingDuration := c.delayPriority - time.Since(c.timeStart)
 		c.timer.Reset(remainingDuration)
 	}
