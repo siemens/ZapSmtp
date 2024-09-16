@@ -109,7 +109,7 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 	}
 
 	// Check whether timer needs to execute sooner
-	if len(c.entriesBuf)+len(c.entriesPriorityBuf) >= 1000 {
+	if len(c.entriesBuf)+len(c.entriesPriorityBuf) >= 100 {
 
 		// Cached messages are getting too much, SMTP delivery might not be guaranteed anymore, send messages now.
 		// A negative duration leads to the timer firing immediately.
