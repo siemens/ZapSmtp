@@ -12,7 +12,6 @@ package smtp
 
 import (
 	"github.com/siemens/ZapSmtp/_test"
-	"io/ioutil"
 	"net/mail"
 	"os"
 	"path/filepath"
@@ -41,12 +40,13 @@ func TestNewSmtpWriteSyncer(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..", _test.TestDir)
 
+	// Prepare certificate and key files
 	cert1 := filepath.Join(root, _test.Cert1)
 	key1 := filepath.Join(root, _test.Key1)
 	cert2 := filepath.Join(root, _test.Cert2)
 
-	// Create a new temporary directory
-	tempDir, errDir := ioutil.TempDir(root, "temp_dir*")
+	// Create temporary directory
+	tempDir, errDir := os.MkdirTemp(root, "temp_dir*")
 	if errDir != nil {
 		t.Errorf("could not create temporary directory: %s", errDir)
 		return
@@ -122,10 +122,10 @@ func TestSmtpWriteSyncer_Write(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..", _test.TestDir)
 
-	// Create a new temporary directory
-	tempDir, errDir := ioutil.TempDir(root, "temp_dir*")
-	if errDir != nil {
-		t.Errorf("could not create temporary directory: %s", errDir)
+	// Create temporary directory
+	tempDir, errRead := os.MkdirTemp(root, "temp_dir*")
+	if errRead != nil {
+		t.Errorf("could not create temporary directory: %s", errRead)
 		return
 	}
 
@@ -147,16 +147,18 @@ func TestSmtpWriteSyncer_Write(t *testing.T) {
 		tempDir:     tempDir,
 	}
 
+	// Write some message
 	msg := []byte("some message")
 	_, _ = ws.Write(msg) // Ignore the actual result
 
 	// Make sure that all temporary files have been cleaned up
-	files, errDir := ioutil.ReadDir(tempDir)
-	if errDir != nil {
-		t.Errorf("could not read directory: %s", errDir)
+	files, errRead := os.ReadDir(tempDir)
+	if errRead != nil {
+		t.Errorf("could not read directory: %s", errRead)
 		return
 	}
 
+	// Check if there are any files left
 	if len(files) > 0 {
 		t.Errorf("files after execution = %v, expected empty directory", files)
 	}

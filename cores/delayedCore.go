@@ -21,8 +21,8 @@ import (
 
 type delayedCore struct {
 	zapcore.LevelEnabler
-	enc zapcore.Encoder
-	out zapcore.WriteSyncer
+	enc  zapcore.Encoder
+	sink zapcore.WriteSyncer
 
 	priority           zapcore.LevelEnabler
 	delay              time.Duration
@@ -41,7 +41,7 @@ type delayedCore struct {
 func NewDelayedCore(
 	enab zapcore.LevelEnabler,
 	enc zapcore.Encoder,
-	out zapcore.WriteSyncer,
+	sink zapcore.WriteSyncer,
 
 	priority zapcore.LevelEnabler,
 	delay time.Duration,
@@ -57,7 +57,7 @@ func NewDelayedCore(
 		LevelEnabler:       enab,
 		priority:           priority,
 		enc:                enc,
-		out:                out,
+		sink:               sink,
 		delay:              delay,
 		delayPriority:      delayPriority,
 		entriesBuf:         make([]*buffer.Buffer, 0, 5),
@@ -80,6 +80,11 @@ func addFields(enc zapcore.ObjectEncoder, fields []zapcore.Field) {
 	}
 }
 
+// Check determines whether the supplied Entry should be logged. If the entry
+// should be logged, the Core adds itself to the CheckedEntry and returns
+// the result.
+//
+// Callers must use Check before calling Write.
 func (c *delayedCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
 	if c.Enabled(ent.Level) || c.priority.Enabled(ent.Level) {
 		return ce.AddCore(ent, c)
@@ -87,6 +92,10 @@ func (c *delayedCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcor
 	return ce
 }
 
+// Write serializes the Entry and any Fields and adds them to the log buffer.
+// Buffered logs are not yet written, they will be written in bulks on Sync().
+//
+// If called, it should not replicate the logic of Check(), but always add the message.
 func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 
 	// Encode the message
@@ -95,7 +104,7 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 		return errEncode
 	}
 
-	// Request mutex to avoid sending out partial messages
+	// Request mutex to avoid sending partial messages
 	c.mutex.Lock()
 
 	// Start timer on first message
@@ -109,7 +118,7 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 	}
 
 	// Check whether timer needs to execute sooner
-	if len(c.entriesBuf)+len(c.entriesPriorityBuf) >= 20 {
+	if len(c.entriesBuf)+len(c.entriesPriorityBuf) >= 1000 {
 
 		// Cached messages are getting too much, SMTP delivery might not be guaranteed anymore, send messages now.
 		// A negative duration leads to the timer firing immediately.
@@ -131,11 +140,12 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 		c.entriesBuf = append(c.entriesBuf, buf)
 	}
 
-	// At this point we're not accessing the message slices anymore
+	// At this point we're not accessing the message buffer anymore
 	c.mutex.Unlock()
 
 	// Since we may be crashing the program, sync the output. Ignore Sync
 	// errors, pending a clean solution to issue #370.
+	// https://github.com/uber-go/zap/issues/500
 	if ent.Level > zapcore.ErrorLevel {
 		errSync := c.Sync()
 		if errSync != nil {
@@ -143,7 +153,7 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 		}
 	}
 
-	// Start a new goroutine for syncing after the timer expired
+	// Start a new goroutine for syncing after the timer expired.
 	if startRoutine {
 		go func() {
 			<-c.timer.C
@@ -155,29 +165,26 @@ func (c *delayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 		}()
 	}
 
-	// Check if there are errors of a previous sync routines
-	var errs error
-loop:
-	for {
-		select {
-		case err := <-c.errCh:
-			errs = multierr.Append(errs, err)
-		default:
-			break loop
-		}
-	}
-
-	return errs
+	// Return nil as everything went fine
+	return nil
 }
 
-// Sync will create and send the message to the writer
-func (c *delayedCore) Sync() error {
+// Sync flushes buffered logs (if any). Will create and send the message to the writer.
+func (c *delayedCore) Sync() (errSync error) {
 
 	// Request mutex to avoid changes to messages while resetting everything
 	c.mutex.Lock()
 
-	// Combine the priority and standard messages and prepend a nice header.
+	// Return if there are no buffered messages, in case of race conditions
+	if len(c.entriesPriorityBuf) == 0 && len(c.entriesBuf) == 0 {
+		c.mutex.Unlock()
+		return nil
+	}
+
+	// Combine the priority and standard messages prepended with a nice header
 	msg := make([]byte, 0, 1024*(len(c.entriesPriorityBuf)+len(c.entriesBuf))) // Assume a default log size of 1 KiB
+
+	// Append Priority messages
 	if len(c.entriesPriorityBuf) > 0 {
 		msg = append(msg, []byte("=== Priority Log ===\n")...)
 		for _, buf := range c.entriesPriorityBuf {
@@ -187,32 +194,52 @@ func (c *delayedCore) Sync() error {
 
 		msg = append(msg, []byte("\n")...)
 		msg = append(msg, []byte("\n")...)
-
-		// Clear the slice but keep the allocated memory
-		c.entriesPriorityBuf = c.entriesPriorityBuf[:0]
 	}
 
+	// Append standard messages
 	if len(c.entriesBuf) > 0 {
 		msg = append(msg, []byte("=== Standard Log ===\n")...)
 		for _, buf := range c.entriesBuf {
 			msg = append(msg, buf.Bytes()...)
 			buf.Free()
 		}
-
-		// Clear the slice but keep the allocated memory
-		c.entriesBuf = c.entriesBuf[:0]
 	}
 
-	// At this point we're not accessing the message slices anymore
+	// Write message
+	_, errSync = c.sink.Write(msg)
+	if errSync != nil {
+		return errSync
+	}
+
+	// Sync sink to make sure messages are written
+	errSync = c.sink.Sync()
+	if errSync != nil {
+		return errSync
+	}
+
+	// Clear the slice after a successful write but keep the allocated memory
+	c.entriesPriorityBuf = c.entriesPriorityBuf[:0]
+	c.entriesBuf = c.entriesBuf[:0]
+
+	// At this point we're not accessing the message buffer anymore
 	c.mutex.Unlock()
 
-	_, err := c.out.Write(msg)
-	if err != nil {
-		// Stored message to be picked up by next call to core's Write method
-		return err
+	// Check if previous timed sync runs (asynchronous) had errors
+loop:
+	for {
+		select {
+		case errSyncTimed := <-c.errCh:
+			errSync = multierr.Append(errSync, errSyncTimed)
+		default:
+			break loop
+		}
+	}
+	if errSync != nil {
+		return errSync
 	}
 
-	return c.out.Sync()
+	// Return nil if everything went fine
+	return nil
 }
 
 func (c *delayedCore) clone() *delayedCore {
@@ -220,6 +247,6 @@ func (c *delayedCore) clone() *delayedCore {
 		LevelEnabler: c.LevelEnabler,
 		priority:     c.priority,
 		enc:          c.enc.Clone(),
-		out:          c.out,
+		sink:         c.sink,
 	}
 }

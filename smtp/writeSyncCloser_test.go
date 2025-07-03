@@ -12,7 +12,6 @@ package smtp
 
 import (
 	"github.com/siemens/ZapSmtp/_test"
-	"io/ioutil"
 	"net/mail"
 	"os"
 	"path/filepath"
@@ -44,8 +43,8 @@ func TestNewWriteSyncCloser(t *testing.T) {
 	key1 := filepath.Join(root, _test.Key1)
 	cert2 := filepath.Join(root, _test.Cert2)
 
-	// Create a new temporary directory
-	tempDir, errDir := ioutil.TempDir(root, "temp_dir*")
+	// Create temporary directory
+	tempDir, errDir := os.MkdirTemp(root, "temp_dir*")
 	if errDir != nil {
 		t.Errorf("could not create temporary directory: %s", errDir)
 		return
@@ -106,11 +105,11 @@ func TestNewWriteSyncCloser(t *testing.T) {
 				t.Errorf("NewWriteSyncCloser() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
-			// Check whether the creation of the files was successful, clean up afterwards
+			// Check whether the creation of the files was successful, clean up afterward
 			if err == nil {
-				files, errDir := ioutil.ReadDir(tempDir)
-				if errDir != nil {
-					t.Errorf("could not read directory: %s", errDir)
+				files, errRead := os.ReadDir(tempDir)
+				if errRead != nil {
+					t.Errorf("could not read directory: %s", errRead)
 					return
 				}
 
@@ -141,12 +140,13 @@ func TestNewWriteSyncCloser(t *testing.T) {
 
 			// Make sure that all temporary files have been cleaned up correctly. Either by the New function because of
 			// an error or because Close was called.
-			files, errDir := ioutil.ReadDir(tempDir)
-			if errDir != nil {
-				t.Errorf("could not read directory: %s", errDir)
+			files, errRead := os.ReadDir(tempDir)
+			if errRead != nil {
+				t.Errorf("could not read directory: %s", errRead)
 				return
 			}
 
+			// Check if there are any files left
 			if len(files) > 0 {
 				t.Errorf("files after cleanup = %v, expected empty directory", files)
 			}

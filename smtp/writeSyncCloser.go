@@ -25,7 +25,7 @@ type writeSyncCloser struct {
 	toCerts  []string
 }
 
-// NewWriteSyncCloser wraps a smtp.writeSyncer. It will safe the needed certificate and key files at initialization
+// NewWriteSyncCloser wraps a smtp.writeSyncer. It will save the needed certificate and key files at initialization
 // instead of creating it every time a mail is sent out. The files will be removed by calling Close. If an error occurs
 // the files will be automatically removed again. For more information on the parameters take a look at NewWriteSyncer.
 func NewWriteSyncCloser(

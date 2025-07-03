@@ -12,10 +12,10 @@ package smtp
 
 import (
 	"bytes"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"net/mail"
 	"net/smtp"
 	"os"
@@ -48,40 +48,33 @@ func PrepareSignatureKeys(
 		}
 	}
 
-	// Check whether the private key and the public key match. Otherwise any validation of the signature would fail.
+	// Check whether the private key and the public key match. Otherwise, any validation of the signature would fail.
 	// First create a matching public key for the private key
-	args := []string{"pkey", "-pubout", "-outform", "pem"}
-	cmd := exec.Command(openSslPath, args...)
+	cmd := exec.Command(openSslPath, "pkey", "-pubout", "-outform", "pem")
+	cmd.Stdin = bytes.NewReader(signatureKey)
 
-	// Create the needed buffers. We stream the key to stdin rather than saving it in a file first.
-	in := bytes.NewReader(signatureKey)
-	outPriv := &bytes.Buffer{}
-	errsPriv := &bytes.Buffer{}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, outPriv, errsPriv
+	// Create the needed buffers
+	var outPriv, errsPriv bytes.Buffer
+	cmd.Stdout = &outPriv
+	cmd.Stderr = &errsPriv
 
-	if err := cmd.Run(); err != nil {
-		if len(errsPriv.Bytes()) > 0 {
-			return nil, nil, fmt.Errorf("error checking sender's private key (%s):\n %v", err, errsPriv.String())
-		}
-		return nil, nil, err
+	// Run command
+	if errRun := cmd.Run(); errRun != nil {
+		return nil, nil, fmt.Errorf("error checking sender's private key (%s):\n %v", errRun, errsPriv.String())
 	}
 
 	// Secondly read the public key from the certificate
-	args = []string{"x509", "-pubkey", "-noout", "-outform", "pem"}
-	cmd = exec.Command(openSslPath, args...)
+	cmd = exec.Command(openSslPath, "x509", "-pubkey", "-noout", "-outform", "pem")
+	cmd.Stdin = bytes.NewReader(signatureCert)
 
-	// Create new buffers buffers, we can't reuse the old ones by resetting, as buffer is not thread safe. We stream the
-	// certificate to stdin rather than saving it in a file first.
-	inCert := bytes.NewReader(signatureCert)
-	outPub := &bytes.Buffer{}
-	errsPub := &bytes.Buffer{}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = inCert, outPub, errsPub
+	// Create the needed buffers
+	var outPub, errsPub bytes.Buffer
+	cmd.Stdout = &outPub
+	cmd.Stderr = &errsPub
 
+	// Run command
 	if errRun := cmd.Run(); errRun != nil {
-		if len(errsPub.Bytes()) > 0 {
-			return nil, nil, fmt.Errorf("error checking sender's certificate (%s):\n %v", errRun, errsPub.String())
-		}
-		return nil, nil, errRun
+		return nil, nil, fmt.Errorf("error checking sender's certificate (%s):\n %v", errRun, errsPub.String())
 	}
 
 	// Compare string results - PEM format is base64 encoded and this way no reflection is needed.
@@ -202,6 +195,7 @@ func SendMail(
 		return fmt.Errorf("could not send mail: %s", errSend)
 	}
 
+	// Return nil as everything went fine
 	return nil
 }
 
@@ -328,54 +322,85 @@ func SendMail3(
 // Returns the certificate in DER format to PEM format, it fails if the input is in any other encoding.
 func certToPem(openSslPath string, cert []byte) ([]byte, error) {
 
-	if len(cert) < 0 {
-		return nil, fmt.Errorf("certificate must not be nil/empty")
+	// Check if certificate was provided
+	if len(cert) == 0 {
+		return nil, fmt.Errorf("certificate must not be empty")
+	}
+	if _, err := x509.ParseCertificate(cert); err != nil {
+		return nil, fmt.Errorf("certificate must be DER encoded")
+	}
+
+	// Create temporary file for the certificate
+	tmpFile, errTmp := os.CreateTemp("", "cert-*.der")
+	if errTmp != nil {
+		return nil, fmt.Errorf("could not create temporary DER file: %v", errTmp)
+	}
+
+	// Cleanup on return
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	defer func() { _ = tmpFile.Close() }()
+
+	// Write the certificate bytes to the temp file
+	_, errWrite := tmpFile.Write(cert)
+	if errWrite != nil {
+		return nil, fmt.Errorf("could not write temporary DER file: %v", errWrite)
 	}
 
 	// Try to transform the certificate from DER to PEM format
-	args := []string{"x509", "-inform", "der", "-outform", "pem"}
-	cmd := exec.Command(openSslPath, args...)
+	cmd := exec.Command(openSslPath, "x509", "-inform", "der", "-in", tmpFile.Name(), "-outform", "pem")
 
-	// Create the needed buffers. We stream the certificate to stdin rather than saving it in a file first.
-	in := bytes.NewReader(cert)
-	out := &bytes.Buffer{}
-	errs := &bytes.Buffer{}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, errs
+	// Create the needed buffers
+	var out, errs bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errs
 
+	// Run command
 	if err := cmd.Run(); err != nil {
-		if len(errs.Bytes()) > 0 {
-			return nil, fmt.Errorf("error converting certificate to PEM format (%s):\n %v", err, errs.String())
-		}
-		return nil, err
+		return nil, fmt.Errorf("error converting certificate to PEM format (%s):\n %v", err, errs.String())
 	}
 
+	// Return output
 	return out.Bytes(), nil
 }
 
 // Returns the key in DER format to PEM format, it fails if the input is in any other encoding.
 func keyToPem(openSslPath string, key []byte) ([]byte, error) {
 
-	if len(key) < 0 {
-		return nil, fmt.Errorf("key must not be nil/empty")
+	// Check if key was provided
+	if len(key) == 0 {
+		return nil, fmt.Errorf("key must not be empty")
 	}
 
-	// Try to transform the certificate from DER to PEM format
-	args := []string{"pkey", "-inform", "der", "-outform", "pem"}
-	cmd := exec.Command(openSslPath, args...)
+	// Create temporary file for the key
+	tmpFile, errTmp := os.CreateTemp("", "key-*.der")
+	if errTmp != nil {
+		return nil, fmt.Errorf("could not create temporary DER file: %v", errTmp)
+	}
 
-	// Create the needed buffers. We stream the key to stdin rather than saving it in a file first.
-	in := bytes.NewReader(key)
-	out := &bytes.Buffer{}
-	errs := &bytes.Buffer{}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, errs
+	// Cleanup on return
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	defer func() { _ = tmpFile.Close() }()
 
+	// Write the key bytes to the temp file
+	_, errWrite := tmpFile.Write(key)
+	if errWrite != nil {
+		return nil, fmt.Errorf("could not write temporary DER file: %v", errWrite)
+	}
+
+	// Try to transform the key from DER to PEM format
+	cmd := exec.Command(openSslPath, "pkey", "-inform", "der", "-in", tmpFile.Name(), "-outform", "pem")
+
+	// Create the needed buffers
+	var out, errs bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errs
+
+	// Run command
 	if err := cmd.Run(); err != nil {
-		if len(errs.Bytes()) > 0 {
-			return nil, fmt.Errorf("error converting key to PEM format (%s):\n %v", err, errs.String())
-		}
-		return nil, err
+		return nil, fmt.Errorf("error converting key to PEM format (%s):\n %v", err, errs.String())
 	}
 
+	// Return output
 	return out.Bytes(), nil
 }
 
@@ -395,24 +420,20 @@ func signMessage(
 	}
 
 	// Create the command for signing the message
-	argsSign := []string{"smime", "-sign", "-signer", fromCert, "-inkey", fromKey}
-	cmdSign := exec.Command(openSslPath, argsSign...)
+	cmd := exec.Command(openSslPath, "smime", "-sign", "-signer", fromCert, "-inkey", fromKey)
+	cmd.Stdin = bytes.NewReader(message)
 
-	// Set the correct i/o buffers. Stream the message to stdin rather than saving it to a file.
-	in := bytes.NewReader(message)
-	out := &bytes.Buffer{}
-	errs := &bytes.Buffer{}
-	cmdSign.Stdin, cmdSign.Stdout, cmdSign.Stderr = in, out, errs
+	// Create the needed buffers
+	var out, errs bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errs
 
-	// Actually run the signing
-	errSign := cmdSign.Run()
-	if errSign != nil {
-		if len(errs.Bytes()) > 0 {
-			return nil, fmt.Errorf("error signing message (%s):\n %v", errSign, errs.String())
-		}
-		return nil, errSign
+	// Run command
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("error signing message (%s):\n %v", err, errs.String())
 	}
 
+	// Return output
 	return out.Bytes(), nil
 }
 
@@ -443,7 +464,7 @@ func encryptMessage(
 	}
 
 	// Create the command for encrypting the (signed) message
-	argsEnc := []string{
+	args := []string{
 		"smime",
 		"-encrypt",
 		"-from",
@@ -454,51 +475,51 @@ func encryptMessage(
 		subject,
 		"-aes256",
 	}
-	argsEnc = append(argsEnc, recipientCertPaths...)
-	cmdEnc := exec.Command(openSslPath, argsEnc...)
+	args = append(args, recipientCertPaths...)
+	cmd := exec.Command(openSslPath, args...)
+	cmd.Stdin = bytes.NewReader(message)
 
-	// Set the correct i/o buffers. Stream the message to stdin rather than saving it to a file.
-	inEnc := bytes.NewReader(message)
-	outEnc := &bytes.Buffer{}
-	errsEnc := &bytes.Buffer{}
-	cmdEnc.Stdin, cmdEnc.Stdout, cmdEnc.Stderr = inEnc, outEnc, errsEnc
+	// Create the needed buffers
+	var out, errs bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errs
 
 	// Actually run the encryption
-	errEnc := cmdEnc.Run()
-	if errEnc != nil {
-		if len(errsEnc.Bytes()) > 0 {
-			return nil, fmt.Errorf("error encrypting message (%s):\n %v", errEnc, errsEnc.String())
-		}
-		return nil, errEnc
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("error encrypting message (%s):\n %v", err, errs.String())
 	}
 
-	return outEnc.Bytes(), nil
+	// Return output
+	return out.Bytes(), nil
 }
 
+// saveToTemp writes given data to a temporary PEM file
 func saveToTemp(data []byte, tempDir string) (string, error) {
 
-	// Create a temporary file and write the certificate to it
-	f, errFile := ioutil.TempFile(tempDir, "*.pem")
-	if errFile != nil {
-		return "", fmt.Errorf("could not create file: %s", errFile)
+	// Create temporary file and write the certificate to it
+	tmpFile, errTmp := os.CreateTemp(tempDir, "*.pem")
+	if errTmp != nil {
+		return "", fmt.Errorf("could not create file: %s", errTmp)
 	}
 
 	// Get the path
-	path := f.Name()
+	path := tmpFile.Name()
 
-	_, errWrite := f.Write(data)
+	// Write data to the file
+	_, errWrite := tmpFile.Write(data)
 	if errWrite != nil {
-		_ = f.Close()
+		_ = tmpFile.Close()
 		_ = os.Remove(path)
 		return "", fmt.Errorf("could not write: %s", errWrite)
 	}
 
 	// Clean up the file descriptor - file needs to be removed later on.
-	errClose := f.Close()
+	errClose := tmpFile.Close()
 	if errClose != nil {
 		_ = os.Remove(path)
 		return "", fmt.Errorf("could not close file descriptor: %s", errClose)
 	}
 
+	// Return path of the temporary file
 	return path, nil
 }
