@@ -17,22 +17,23 @@ import (
 
 var (
 	// Need to configure these before testing!
-	Server             = "mail.domain.tld"
-	Port        uint16 = 25
-	Username           = "" // Leave empty to skip authentication
-	Password           = "" // Leave empty to skip authentication
-	OpensslPath        = ""
+	SmtpServer          = "mail.domain.tld"
+	SmtpPort     uint16 = 25
+	SmtpUser            = "" // Leave empty to skip authentication
+	SmtpPassword        = "" // Leave empty to skip authentication
+	OpensslPath         = ""
 
 	// Can optionally be set
-	Subject   = "smtpWriter test mail"
-	Sender    = mail.Address{Name: "Test Sender", Address: "sender@domain.tld"}
-	Recipient = mail.Address{Name: "Test Recipient", Address: "recipient@domain.tld"}
-	TestDir   = "_test" // relative path starting at application root
-	Cert1     = filepath.Join("..", TestDir, "cert1.pem")
-	Key1      = filepath.Join("..", TestDir, "key1.pem")
-	Cert2     = filepath.Join("..", TestDir, "cert2.pem")
-	Key2      = filepath.Join("..", TestDir, "key2.pem")
+	MailSubject = "SmtpSyncer Test Mail"
+	MailFrom    = mail.Address{Name: "Test Sender", Address: "sender@domain.tld"}
+	MailTo      = mail.Address{Name: "Test Recipient", Address: "recipient@domain.tld"}
+
+	TestDirPath = "_test" // relative path starting at application root
+	Cert1Path   = filepath.Join("..", TestDirPath, "cert1.pem")
+	Key1Path    = filepath.Join("..", TestDirPath, "key1.pem")
+	Cert2Path   = filepath.Join("..", TestDirPath, "cert2.pem")
+	Key2Path    = filepath.Join("..", TestDirPath, "key2.pem")
 
 	RealRecipient = mail.Address{Name: "", Address: ""}
-	RealCert      = ""
+	RealCertPath  = ""
 )
