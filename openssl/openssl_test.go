@@ -33,7 +33,7 @@ func Test_PrepareSignatureKeys(t *testing.T) {
 	// Retrieve the project root and build the absolute paths
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Errorf("unable to get caller information")
+		t.Errorf("could not get caller information")
 		return
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
@@ -145,7 +145,7 @@ func Test_PrepareEncryptionKeys(t *testing.T) {
 	// Retrieve the project root and build the absolute paths
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Errorf("unable to get caller information")
+		t.Errorf("could not get caller information")
 		return
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
@@ -248,7 +248,7 @@ func Test_certToPem(t *testing.T) {
 	// Retrieve the project root and build the absolute paths
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Errorf("unable to get caller information")
+		t.Errorf("could not get caller information")
 		return
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
@@ -260,12 +260,12 @@ func Test_certToPem(t *testing.T) {
 	// Load certificates
 	certDer, errRead := os.ReadFile(cert + ".der")
 	if errRead != nil {
-		t.Errorf("unable to read file '%s': %s", cert+".der", errRead)
+		t.Errorf("could not read file '%s': %s", cert+".der", errRead)
 		return
 	}
 	certPem, errRead2 := os.ReadFile(cert + ".pem")
 	if errRead2 != nil {
-		t.Errorf("unable to read file '%s': %s", cert+".pem", errRead2)
+		t.Errorf("could not read file '%s': %s", cert+".pem", errRead2)
 		return
 	}
 
@@ -317,7 +317,7 @@ func Test_keyToPem(t *testing.T) {
 	// Retrieve the project root and build the absolute paths
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Errorf("unable to get caller information")
+		t.Errorf("could not get caller information")
 		return
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
@@ -329,12 +329,12 @@ func Test_keyToPem(t *testing.T) {
 	// Load Keys
 	keyDer, errRead := os.ReadFile(key + ".der")
 	if errRead != nil {
-		t.Errorf("unable to read file '%s': %s", key+".der", errRead)
+		t.Errorf("could not read file '%s': %s", key+".der", errRead)
 		return
 	}
 	keyPem, errRead2 := os.ReadFile(key + ".pem")
 	if errRead2 != nil {
-		t.Errorf("unable to read file '%s': %s", key+".pem", errRead2)
+		t.Errorf("could not read file '%s': %s", key+".pem", errRead2)
 		return
 	}
 
@@ -389,7 +389,7 @@ func Test_signMessage(t *testing.T) {
 	// Retrieve the project root and build the absolute paths
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Errorf("unable to get caller information")
+		t.Errorf("could not get caller information")
 		return
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
@@ -467,7 +467,7 @@ func Test_signMessage(t *testing.T) {
 
 			// Check output
 			if !bytes.Equal(outB, message) || string(errsB) != "Verification successful\n" {
-				t.Errorf("unable to verify signature. out: '%s', err: '%s'", string(outB), string(errsB))
+				t.Errorf("could not verify signature. out: '%s', err: '%s'", string(outB), string(errsB))
 			}
 		})
 	}
@@ -484,7 +484,7 @@ func Test_encryptMessage(t *testing.T) {
 	// Retrieve the project root and build the absolute paths
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Errorf("unable to get caller information")
+		t.Errorf("could not get caller information")
 		return
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
@@ -584,7 +584,7 @@ func Test_encryptMessage(t *testing.T) {
 
 				// Check result
 				if !bytes.Equal(outB, message) || string(errsB) != "" {
-					t.Errorf("unable to decrypt message. out: '%s', err: '%s'", string(outB), string(errsB))
+					t.Errorf("could not decrypt message. out: '%s', err: '%s'", string(outB), string(errsB))
 				}
 			}
 		})

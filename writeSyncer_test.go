@@ -34,7 +34,7 @@ func TestNewSmtpWriteSyncer(t *testing.T) {
 	// Retrieve the project root and build the absolute paths
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Errorf("unable to get caller information")
+		t.Errorf("could not get caller information")
 		return
 	}
 	root := filepath.Join(filepath.Dir(file), _test.TestDirPath)

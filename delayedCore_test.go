@@ -113,7 +113,7 @@ func TestDelayedCore(t *testing.T) {
 		time.Second*2,
 	)
 	if errDelayedCore != nil {
-		t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
+		t.Errorf("could not initialize delayed core: %s", errDelayedCore)
 		return
 	}
 	delayedCore.With([]Field{makeInt64Field("k", 1)})
@@ -175,7 +175,7 @@ func TestDelayedCoreSyncFail(t *testing.T) {
 		time.Second*2,
 	)
 	if errDelayedCore != nil {
-		t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
+		t.Errorf("could not initialize delayed core: %s", errDelayedCore)
 		return
 	}
 
@@ -224,7 +224,7 @@ func TestDelayedCoreSyncsOutput(t *testing.T) {
 			time.Minute*10, // Very long delay, so only panic and fatal lvl will be synced
 		)
 		if errDelayedCore != nil {
-			t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
+			t.Errorf("could not initialize delayed core: %s", errDelayedCore)
 			return
 		}
 
@@ -281,7 +281,7 @@ func TestDelayedCoreDelayedSyncsOutput(t *testing.T) {
 				time.Second*2,
 			)
 			if errDelayedCore != nil {
-				t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
+				t.Errorf("could not initialize delayed core: %s", errDelayedCore)
 				return
 			}
 
@@ -317,7 +317,7 @@ func TestDelayedCoreWriteFailure(t *testing.T) {
 		0,
 	)
 	if errDelayedCore != nil {
-		t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
+		t.Errorf("could not initialize delayed core: %s", errDelayedCore)
 		return
 	}
 

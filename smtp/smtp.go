@@ -151,7 +151,7 @@ func SendMail2(
 		// Convert signature certificate and key if necessary
 		signatureCert, signatureKey, err = openssl.PrepareSignatureKeys(opensslPath, signatureCert, signatureKey)
 		if err != nil {
-			return fmt.Errorf("unable to prepare signature key: %s", err)
+			return fmt.Errorf("could not prepare signature key: %s", err)
 		}
 
 		// Write signing certificate to disk, where it can be used by OpenSSL
@@ -176,7 +176,7 @@ func SendMail2(
 		// Convert encryption certificates if necessary
 		encryptionKeys, err = openssl.PrepareEncryptionKeys(opensslPath, encryptionKeys)
 		if err != nil {
-			return fmt.Errorf("unable to prepare encryption key: %s", err)
+			return fmt.Errorf("could not prepare encryption key: %s", err)
 		}
 
 		// Write encryption keys to disk, where it can be used by OpenSSL
