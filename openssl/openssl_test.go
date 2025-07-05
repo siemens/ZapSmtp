@@ -13,7 +13,6 @@ package openssl
 import (
 	"bytes"
 	"github.com/siemens/ZapSmtp/_test"
-	"net/mail"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,7 +38,7 @@ func Test_PrepareSignatureKeys(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
 
-	// Pepare certificate 1 paths
+	// Prepare certificate 1 paths
 	cert := strings.TrimSuffix(_test.Cert1Path, filepath.Ext(_test.Cert1Path))
 	key := strings.TrimSuffix(_test.Key1Path, filepath.Ext(_test.Key1Path))
 	certPem := filepath.Join(root, _test.TestDirPath, cert+".pem")
@@ -151,7 +150,7 @@ func Test_PrepareEncryptionKeys(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
 
-	// Pepare certificate 1 paths
+	// Prepare certificate 1 paths
 	cert1 := strings.TrimSuffix(_test.Cert1Path, filepath.Ext(_test.Cert1Path))
 	cert1Pem := filepath.Join(root, _test.TestDirPath, cert1+".pem")
 	cert1Der := filepath.Join(root, _test.TestDirPath, cert1+".der")
@@ -238,100 +237,6 @@ func Test_PrepareEncryptionKeys(t *testing.T) {
 	}
 }
 
-func Test_sendMail(t *testing.T) {
-
-	// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
-	// only be reviewed manually
-
-	// Make sure all the variables needed for the tests are set
-	if _test.OpensslPath == "" {
-		t.Errorf("please configure the OpenSSL installation path and restart the test")
-		return
-	}
-
-	// Make sure all the variables needed for the tests are set
-	if _test.SmtpServer == "" ||
-		_test.SmtpPort == 0 {
-		t.Errorf("please configure the SMTP server and restart the test")
-		return
-	}
-
-	// Make sure all the variables needed for the tests are set
-	if _test.Cert1Path == "" ||
-		_test.Key1Path == "" ||
-		_test.RealRecipient.Address == "" {
-		t.Errorf("please configure the recipient details and restart the test")
-		return
-	}
-
-	// Prepare certificate paths
-	var toCerts []string
-	var toCertsDouble []string
-	if len(_test.RealCertPath) > 0 {
-		toCerts = append(toCerts, _test.RealCertPath)
-		toCertsDouble = append(toCertsDouble, _test.RealCertPath)
-		toCertsDouble = append(toCertsDouble, _test.RealCertPath)
-	}
-
-	// Prepare test cases
-	type args struct {
-		message      []byte
-		smtpServer   string
-		smtpPort     uint16
-		smtpUser     string
-		smtpPassword string
-
-		mailSubject    string
-		mailFrom       mail.Address
-		mailRecipients []mail.Address
-
-		pathOpenssl         string
-		pathSignatureCert   string
-		pathSignatureKey    string
-		pathEncryptionCerts []string
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
-		{"valid", args{[]byte("valid email, signed and optionally encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, false},
-		{"valid-no-subject", args{[]byte("valid email, signed and optionally encrypted, no subject"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, "", _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, false},
-		{"valid-no-message", args{[]byte(""), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject + " (signed and optionally encrypted, no content inside)", _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, false},
-		{"valid-multiple-recipients", args{[]byte("valid email, signed but not encrypted, sent to multiple recipients"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}, {"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCertsDouble}, false},
-		{"valid-no-signing", args{[]byte("valid email, not signed and optionally encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, "", "", toCerts}, false},
-		{"valid-no-encryption", args{[]byte("valid email, signed but not encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, []string{}}, false},
-		{"valid-plain", args{[]byte("valid email, not signed and not encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, "", "", "", []string{}}, false},
-
-		{"invalid-host", args{[]byte("some test message that should NOT be received"), "notexisting", _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, true},
-		{"invalid-from", args{[]byte("some test message that should NOT be received"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, mail.Address{"Test", "notexisting@test.com"}, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-
-			// Run test
-			err := SendMail(
-				tt.args.smtpServer,
-				tt.args.smtpPort,
-				tt.args.smtpUser,
-				tt.args.smtpPassword,
-				tt.args.mailFrom,
-				tt.args.mailRecipients,
-				tt.args.mailSubject,
-				tt.args.message,
-				tt.args.pathOpenssl,
-				tt.args.pathSignatureCert,
-				tt.args.pathSignatureKey,
-				tt.args.pathEncryptionCerts,
-			)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("SendMail() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-		})
-	}
-}
-
 func Test_certToPem(t *testing.T) {
 
 	// Make sure all the variables needed for the tests are set
@@ -384,7 +289,7 @@ func Test_certToPem(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := certToPem(tt.args.pathOpenssl, tt.args.cert)
+			got, err := CertToPem(tt.args.pathOpenssl, tt.args.cert)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("derToPem() error = '%v', wantErr '%v'", err, tt.wantErr)
 				return
@@ -455,7 +360,7 @@ func Test_keyToPem(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			// Run test
-			got, err := keyToPem(tt.args.pathOpenssl, tt.args.key)
+			got, err := KeyToPem(tt.args.pathOpenssl, tt.args.key)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("derToPem() error = '%v', wantErr '%v'", err, tt.wantErr)
 				return
@@ -523,7 +428,7 @@ func Test_signMessage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			// Run test
-			signed, err := signMessage(tt.args.pathOpenssl, tt.args.pathSignatureCert, tt.args.pathSignatureKey, tt.args.message)
+			signed, err := SignMessage(tt.args.pathOpenssl, tt.args.pathSignatureCert, tt.args.pathSignatureKey, tt.args.message)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("sign() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -637,7 +542,7 @@ func Test_encryptMessage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			enc, err := encryptMessage(tt.args.pathOpenssl, tt.args.mailFrom, tt.args.mailRecipients, tt.args.subject, tt.args.message, tt.args.pathEncryptionCerts)
+			enc, err := EncryptMessage(tt.args.pathOpenssl, tt.args.mailFrom, tt.args.mailRecipients, tt.args.subject, tt.args.message, tt.args.pathEncryptionCerts)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("encrypt() error = %v, wantErr %v", err, tt.wantErr)
 				return

@@ -13,6 +13,7 @@ package ZapSmtp
 import (
 	"fmt"
 	"github.com/siemens/ZapSmtp/openssl"
+	"github.com/siemens/ZapSmtp/smtp"
 	"net/mail"
 	"os"
 )
@@ -148,8 +149,8 @@ func NewSmtpSyncer(
 		}
 
 		// Write signature certificate and key to temporary files for later usage
-		pathTmpSigCert, errSaveTmpSigCert = openssl.SaveToTemp(signatureCert, "openssl-signature-cert-*.pem")
-		pathTmpSigKey, errSaveTmpSigKey = openssl.SaveToTemp(signatureKey, "openssl-signature-key-*.pem")
+		pathTmpSigCert, errSaveTmpSigCert = smtp.SaveToTemp(signatureCert, "openssl-signature-cert-*.pem")
+		pathTmpSigKey, errSaveTmpSigKey = smtp.SaveToTemp(signatureKey, "openssl-signature-key-*.pem")
 	}
 
 	// Load and convert encryption certificates, if necessary
@@ -173,7 +174,7 @@ func NewSmtpSyncer(
 		// Write encryption keys to temporary files for later usage
 		for _, encryptionCert := range encryptionCerts {
 			var pathTmpEncCert string
-			pathTmpEncCert, errSaveTmpEncCert = openssl.SaveToTemp(encryptionCert, "openssl-encryption-cert-*.pem")
+			pathTmpEncCert, errSaveTmpEncCert = smtp.SaveToTemp(encryptionCert, "openssl-encryption-cert-*.pem")
 			if errSaveTmpEncCert != nil {
 				break
 			}
@@ -231,7 +232,7 @@ func (s *SmtpSyncer) Write(p []byte) (int, error) {
 	}
 
 	// Send log messages by mail
-	err := openssl.SendMail(
+	err := smtp.SendMail(
 		s.smtpServer,
 		s.smtpPort,
 		s.smtpUser,
