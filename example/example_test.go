@@ -11,68 +11,98 @@
 package example
 
 import (
+	"github.com/siemens/ZapSmtp"
 	"github.com/siemens/ZapSmtp/_test"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"net/mail"
+	"os"
 	"testing"
 	"time"
 )
 
 func Test_example(t *testing.T) {
 
-	// Prepare logger cores and close function
+	// Prepare memory for Zap cores
 	cores := make([]zapcore.Core, 0, 2)
 
-	// Initialize console core
-	coreConsole, errConsole := initConsoleCore(zapcore.DebugLevel)
-	if errConsole != nil {
-		t.Errorf("Console core intialization failed: %s", errConsole)
-		return
-	}
+	// Prepare encoder
+	encConf := zap.NewDevelopmentEncoderConfig()
+	enc := zapcore.NewConsoleEncoder(encConf)
+
+	/*
+	 * Console logger
+	 */
+
+	// Prepare console writeSyncer
+	consoleWriteSyncer := zapcore.Lock(os.Stdout)
+
+	// Prepare console core
+	consoleCore := zapcore.NewCore(enc, consoleWriteSyncer, zapcore.DebugLevel)
 
 	// Attach console core
-	cores = append(cores, coreConsole)
+	cores = append(cores, consoleCore)
 
-	// Initialize SMTP core
-	coreSmtp, coreCloseFn, errSmtp := initSmtpCore(
-		zapcore.WarnLevel,
-		zapcore.ErrorLevel,
-		time.Hour*24,
-		time.Minute*5,
-		_test.Server,
-		_test.Port,
-		_test.Username,
-		_test.Password,
+	/*
+	 * SMTP logger
+	 */
+
+	// Prepare SMTP writeSyncer
+	smtpWriteSyncer, fnCleanup, errSmtpWriteSyncer := ZapSmtp.NewSmtpSyncer(
+		_test.SmtpServer,
+		_test.SmtpPort,
+		_test.SmtpUser,
+		_test.SmtpPassword,
+
 		"Example Logger",
-		_test.Sender,
-		[]mail.Address{_test.Recipient},
+		_test.MailFrom,
+		[]mail.Address{_test.MailTo},
+
 		_test.OpensslPath,
 		"",
 		"",
 		nil,
-		"",
 	)
+	if errSmtpWriteSyncer != nil {
+		t.Errorf("could not initilialize SMTP writeSyncer: %s", errSmtpWriteSyncer)
+		return
+	}
 
-	// Make SMTP core is closed properly
-	defer func() { _ = coreCloseFn() }()
+	// Cleanup SMTP writeSyncer (if you are using it with signature or encryption).
+	// OpenSSL can only receive one argument via Stdin, which is the message. Other arguments, such as
+	// signature or encryption keys must be passed as file paths in a PEM format. The SMTP writeSyncer
+	// prepares the necessary files as temporary files in the required format and uses them throughout
+	// its lifetime. You are responsible for cleaning them up on exit, Zap logger cannot not take care
+	// of that automatically!
+	defer func() { fnCleanup() }()
 
-	// Check for SMTP core initialization errors
-	if errSmtp != nil {
-		t.Errorf("Console core intialization failed: %s", errSmtp)
+	// Prepare SMTP core
+	smtpCore, errSmtpCore := ZapSmtp.NewDelayedCore(
+		zapcore.WarnLevel,
+		enc,
+		smtpWriteSyncer,
+		zapcore.ErrorLevel,
+		time.Hour*24,
+		time.Minute*5,
+	)
+	if errSmtpCore != nil {
+		t.Errorf("could not initilialize SMTP core: %s", errSmtpCore)
 		return
 	}
 
 	// Attach SMTP core
-	cores = append(cores, coreSmtp)
+	cores = append(cores, smtpCore)
 
 	// Tee all the cores together
-	tee := zapcore.NewTee(cores...)
+	// You could also initialize a single core with teed writeSyncers,
+	// but you wouldn't be able to set different log activation levels for them.
+	coresTeed := zapcore.NewTee(cores...)
 
 	// Initialize logger with cores
-	logger := zap.New(tee).Sugar()
+	logger := zap.New(coresTeed).Sugar()
 
-	// Make sure logger is flushed before shutting down
+	// Make sure logger is flushed before shutting down. The SMTP writeSyncer does not need to be flushed,
+	// but the delayed core might still have unsent messages queued.
 	defer func() {
 		errSync := logger.Sync()
 		if errSync != nil {

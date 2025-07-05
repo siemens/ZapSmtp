@@ -8,7 +8,7 @@
 *
  */
 
-package cores
+package ZapSmtp
 
 import (
 	"bytes"
@@ -35,8 +35,7 @@ func (s *Syncer) SetError(err error) {
 	s.err = err
 }
 
-// Sync records that it was called, then returns the user-supplied error (if
-// any).
+// Sync records that it was called, then returns the user-supplied error (if any).
 func (s *Syncer) Sync() error {
 	s.called = true
 	return s.err
@@ -96,58 +95,59 @@ func TestDelayedCore(t *testing.T) {
 	cfg := testEncoderConfig()
 	cfg.TimeKey = ""
 
-	// Prepare sink, which is a simple temporary file
-	sink, errSink := os.CreateTemp("", "zap-test-delayed-core-*")
-	if errSink != nil {
-		t.Errorf("failed to create temp sink file: %s", errSink)
+	// Prepare out, which is a simple temporary file
+	tmpOut, errTmpOut := os.CreateTemp("", "zap-test-delayed-core-*")
+	if errTmpOut != nil {
+		t.Errorf("could not create temp out file: %s", errTmpOut)
 		return
 	}
-	defer func() { _ = os.Remove(sink.Name()) }()
+	defer func() { _ = os.Remove(tmpOut.Name()) }()
 
 	// Prepare core
-	core, errCore := NewDelayedCore(
+	delayedCore, errDelayedCore := NewDelayedCore(
 		InfoLevel,
 		NewJSONEncoder(cfg),
-		sink,
+		tmpOut,
 		WarnLevel,
 		time.Second*4,
 		time.Second*2,
 	)
-	if errCore != nil {
-		t.Errorf("unable to initialize delayed core: %s", errCore)
+	if errDelayedCore != nil {
+		t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
 		return
 	}
-	core.With([]Field{makeInt64Field("k", 1)})
+	delayedCore.With([]Field{makeInt64Field("k", 1)})
 
 	// Call Sync on core
-	errSync := core.Sync()
+	errSync := delayedCore.Sync()
 	if errSync != nil {
 		t.Errorf("Expected Syncing a temp file to succeed.: %s", errSync)
 	}
 
 	// Write test messages
-	if ce := core.Check(Entry{Level: DebugLevel, Message: "debug"}, nil); ce != nil {
+	if ce := delayedCore.Check(Entry{Level: DebugLevel, Message: "debug"}, nil); ce != nil {
 		ce.Write(makeInt64Field("k", 2))
 	}
-	if ce := core.Check(Entry{Level: InfoLevel, Message: "info"}, nil); ce != nil {
+	if ce := delayedCore.Check(Entry{Level: InfoLevel, Message: "info"}, nil); ce != nil {
 		ce.Write(makeInt64Field("k", 3))
 	}
-	if ce := core.Check(Entry{Level: WarnLevel, Message: "warn"}, nil); ce != nil {
+	if ce := delayedCore.Check(Entry{Level: WarnLevel, Message: "warn"}, nil); ce != nil {
 		ce.Write(makeInt64Field("k", 4))
 	}
 
 	// Sleep for the priority time so the log actually gets synced
 	time.Sleep(time.Second * 2)
 
+	// Define wanted output
 	want := []byte("=== Priority Log ===\n" +
 		`{"level":"warn","msg":"warn","k":1,"k":4}` + "\n" +
 		"=== Standard Log ===\n" +
 		`{"level":"info","msg":"info","k":1,"k":3}` + "\n")
 
 	// Read and check logged test messages
-	logged, errRead := os.ReadFile(sink.Name())
+	logged, errRead := os.ReadFile(tmpOut.Name())
 	if errRead != nil {
-		t.Errorf("failed to read from temp file: %s", errRead)
+		t.Errorf("could not read from temp file: %s", errRead)
 		return
 	}
 	if bytes.Equal(logged, want) {
@@ -161,35 +161,35 @@ func TestDelayedCoreSyncFail(t *testing.T) {
 	// Define test error
 	err := fmt.Errorf("failed")
 
-	// Prepare sink, which just discards messages
-	sink := &Discarder{}
-	sink.SetError(err)
+	// Prepare out, which just discards messages
+	out := &Discarder{}
+	out.SetError(err)
 
 	// Prepare core
-	core, errCore := NewDelayedCore(
+	delayedCore, errDelayedCore := NewDelayedCore(
 		DebugLevel,
 		NewJSONEncoder(testEncoderConfig()),
-		sink,
+		out,
 		WarnLevel,
 		time.Second*4,
 		time.Second*2,
 	)
-	if errCore != nil {
-		t.Errorf("unable to initialize delayed core: %s", errCore)
+	if errDelayedCore != nil {
+		t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
 		return
 	}
 
 	// Add log message otherwise Sync would return immediately
-	errWrite := core.Write(Entry{Level: WarnLevel}, nil)
+	errWrite := delayedCore.Write(Entry{Level: WarnLevel}, nil)
 	if errWrite != nil {
 		t.Errorf("could not prepare log messages: %s", errWrite)
 		return
 	}
 
 	// Call Sync and check result
-	errSync := core.Sync()
+	errSync := delayedCore.Sync()
 	if !errors.Is(errSync, err) {
-		t.Errorf("expected Sync to return errors from underlying WriteSyncer: got %v, want %v", errSync, err)
+		t.Errorf("expected Sync to return errors from underlying SmtpSyncer: got %v, want %v", errSync, err)
 		return
 	}
 }
@@ -211,28 +211,28 @@ func TestDelayedCoreSyncsOutput(t *testing.T) {
 	}
 	for i, tt := range tests {
 
-		// Prepare sink, which just discards messages
-		sink := &Discarder{}
+		// Prepare out, which just discards messages
+		out := &Discarder{}
 
 		// Prepare core
-		core, errCore := NewDelayedCore(
+		delayedCore, errDelayedCore := NewDelayedCore(
 			DebugLevel,
 			NewJSONEncoder(testEncoderConfig()),
-			sink,
+			out,
 			ErrorLevel,
 			time.Minute*10, // Very long delay, so only panic and fatal lvl will be synced
 			time.Minute*10, // Very long delay, so only panic and fatal lvl will be synced
 		)
-		if errCore != nil {
-			t.Errorf("unable to initialize delayed core: %s", errCore)
+		if errDelayedCore != nil {
+			t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
 			return
 		}
 
 		// Write entry
-		_ = core.Write(tt.entry, nil)
+		_ = delayedCore.Write(tt.entry, nil)
 
-		// Check if sink got called
-		if tt.shouldSync != sink.Called() {
+		// Check if out got called
+		if tt.shouldSync != out.Called() {
 			t.Errorf("incorrect Sync behavior. %d", i)
 			return
 		}
@@ -268,26 +268,26 @@ func TestDelayedCoreDelayedSyncsOutput(t *testing.T) {
 			// Allow tests to run in parallel to save tim on the hardcoded wait times
 			t.Parallel()
 
-			// Prepare sink, which just discards messages
-			sink := &Discarder{}
+			// Prepare out, which just discards messages
+			out := &Discarder{}
 
 			// Prepare core
-			core, errCore := NewDelayedCore(
+			delayedCore, errDelayedCore := NewDelayedCore(
 				DebugLevel,
 				NewJSONEncoder(testEncoderConfig()),
-				sink,
+				out,
 				WarnLevel,
 				time.Second*4,
 				time.Second*2,
 			)
-			if errCore != nil {
-				t.Errorf("unable to initialize delayed core: %s", errCore)
+			if errDelayedCore != nil {
+				t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
 				return
 			}
 
 			// Write entries
 			for _, entry := range tt.entries {
-				_ = core.Write(entry, nil)
+				_ = delayedCore.Write(entry, nil)
 			}
 
 			// Wait for the specified delay, as the sync will be triggered in a new goroutine we will also add a small
@@ -295,7 +295,7 @@ func TestDelayedCoreDelayedSyncsOutput(t *testing.T) {
 			time.Sleep(tt.delay + time.Millisecond*100)
 
 			// Check if Sync got called correctly
-			if tt.shouldSync != sink.Called() {
+			if tt.shouldSync != out.Called() {
 				t.Error("incorrect delay behavior.")
 			}
 		})
@@ -304,32 +304,32 @@ func TestDelayedCoreDelayedSyncsOutput(t *testing.T) {
 
 func TestDelayedCoreWriteFailure(t *testing.T) {
 
-	// Prepare sink, which returns an error after the first write
-	sink := Lock(&OneTimeFailWriter{})
+	// Prepare out, which returns an error after the first write
+	out := Lock(&OneTimeFailWriter{})
 
 	// Prepare core
-	core, errCore := NewDelayedCore(
+	delayedCore, errDelayedCore := NewDelayedCore(
 		zap.LevelEnablerFunc(func(lvl Level) bool { return true }),
 		NewJSONEncoder(testEncoderConfig()),
-		sink,
+		out,
 		zap.LevelEnablerFunc(func(lvl Level) bool { return true }),
 		0,
 		0,
 	)
-	if errCore != nil {
-		t.Errorf("unable to initialize delayed core: %s", errCore)
+	if errDelayedCore != nil {
+		t.Errorf("unable to initialize delayed core: %s", errDelayedCore)
 		return
 	}
 
 	// Sync shouldn't return an error yet, because no Write was called yet
-	errSync1 := core.Sync()
+	errSync1 := delayedCore.Sync()
 	if len(multierr.Errors(errSync1)) > 0 {
 		t.Errorf("Unexpected Sync error: %s", multierr.Errors(errSync1))
 		return
 	}
 
 	// The initial write will start a new sync routine. The error might not be immediately retrieved.
-	errWrite := core.Write(Entry{}, nil)
+	errWrite := delayedCore.Write(Entry{}, nil)
 	if errWrite != nil {
 		t.Errorf("Unexpected Write error: %s", errWrite)
 		return
@@ -339,7 +339,7 @@ func TestDelayedCoreWriteFailure(t *testing.T) {
 	time.Sleep(time.Millisecond * 100)
 
 	// Execute Sync call to pickup error generated by previous Write
-	errSync2 := core.Sync()
+	errSync2 := delayedCore.Sync()
 
 	// A consecutive Sync returns any previous errors caused by Write and it's timed (asynchronous) Sync call
 	if len(multierr.Errors(errSync2)) != 1 {

@@ -8,7 +8,7 @@
 *
  */
 
-package smtp
+package openssl
 
 import (
 	"bytes"
@@ -23,10 +23,10 @@ import (
 	"testing"
 )
 
-func Test_convertSignatureParameters(t *testing.T) {
+func Test_PrepareSignatureKeys(t *testing.T) {
 
 	// Make sure all the variables needed for the tests are set
-	if _test.OpensslPath == "" || _test.Cert2 == "" || _test.Cert1 == "" || _test.Key1 == "" {
+	if _test.OpensslPath == "" || _test.Cert2Path == "" || _test.Cert1Path == "" || _test.Key1Path == "" {
 		t.Errorf("please fill out the test configuration and restart the test")
 		return
 	}
@@ -39,17 +39,22 @@ func Test_convertSignatureParameters(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
 
-	cert := strings.TrimSuffix(_test.Cert1, filepath.Ext(_test.Cert1))
-	key := strings.TrimSuffix(_test.Key1, filepath.Ext(_test.Key1))
-	certPem := filepath.Join(root, _test.TestDir, cert+".pem")
-	certDer := filepath.Join(root, _test.TestDir, cert+".der")
-	keyPem := filepath.Join(root, _test.TestDir, key+".pem")
-	keyDer := filepath.Join(root, _test.TestDir, key+".der")
+	// Pepare certificate 1 paths
+	cert := strings.TrimSuffix(_test.Cert1Path, filepath.Ext(_test.Cert1Path))
+	key := strings.TrimSuffix(_test.Key1Path, filepath.Ext(_test.Key1Path))
+	certPem := filepath.Join(root, _test.TestDirPath, cert+".pem")
+	certDer := filepath.Join(root, _test.TestDirPath, cert+".der")
 
-	cert2 := strings.TrimSuffix(_test.Cert2, filepath.Ext(_test.Cert2))
-	cert2Pem := filepath.Join(root, _test.TestDir, cert2+".pem")
-	cert2Der := filepath.Join(root, _test.TestDir, cert2+".der")
+	// Prepare key 1 paths
+	keyPem := filepath.Join(root, _test.TestDirPath, key+".pem")
+	keyDer := filepath.Join(root, _test.TestDirPath, key+".der")
 
+	// Prepare certificate 2 paths
+	cert2 := strings.TrimSuffix(_test.Cert2Path, filepath.Ext(_test.Cert2Path))
+	cert2Pem := filepath.Join(root, _test.TestDirPath, cert2+".pem")
+	cert2Der := filepath.Join(root, _test.TestDirPath, cert2+".der")
+
+	// Test load
 	wantCert, err := os.ReadFile(certPem)
 	if err != nil {
 		t.Errorf("unable load cert: %s", err)
@@ -65,10 +70,11 @@ func Test_convertSignatureParameters(t *testing.T) {
 	wantCert = bytes.ReplaceAll(wantCert, []byte{13, 10}, []byte{10})
 	wantKey = bytes.ReplaceAll(wantKey, []byte{13, 10}, []byte{10})
 
+	// Prepare test cases
 	type args struct {
-		openSslPath string
-		senderCert  string
-		senderKey   string
+		pathOpenssl       string
+		pathSignatureCert string
+		pathSignatureKey  string
 	}
 	tests := []struct {
 		name     string
@@ -93,19 +99,20 @@ func Test_convertSignatureParameters(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			// Load signature certificate and key
-			fromCert, errLoadCert := os.ReadFile(tt.args.senderCert)
-			if errLoadCert != nil && tt.args.senderCert != "" {
+			fromCert, errLoadCert := os.ReadFile(tt.args.pathSignatureCert)
+			if errLoadCert != nil && tt.args.pathSignatureCert != "" {
 				t.Errorf("could not load sender certificate: %s", errLoadCert)
 				return
 			}
-			fromKey, errLoadKey := os.ReadFile(tt.args.senderKey)
-			if errLoadKey != nil && tt.args.senderKey != "" {
+			fromKey, errLoadKey := os.ReadFile(tt.args.pathSignatureKey)
+			if errLoadKey != nil && tt.args.pathSignatureKey != "" {
 				t.Errorf("could not load sender key: %s", errLoadKey)
 				return
 			}
 
+			// Run test
 			got, got1, errPrep := PrepareSignatureKeys(
-				tt.args.openSslPath,
+				tt.args.pathOpenssl,
 				fromCert,
 				fromKey,
 			)
@@ -128,10 +135,10 @@ func Test_convertSignatureParameters(t *testing.T) {
 	}
 }
 
-func Test_convertEncryptionParameters(t *testing.T) {
+func Test_PrepareEncryptionKeys(t *testing.T) {
 
 	// Make sure all the variables needed for the tests are set
-	if _test.OpensslPath == "" || _test.Cert2 == "" || _test.Cert1 == "" {
+	if _test.OpensslPath == "" || _test.Cert2Path == "" || _test.Cert1Path == "" {
 		t.Errorf("please fill out the test configuration and restart the test")
 		return
 	}
@@ -144,13 +151,17 @@ func Test_convertEncryptionParameters(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
 
-	cert1 := strings.TrimSuffix(_test.Cert1, filepath.Ext(_test.Cert1))
-	cert2 := strings.TrimSuffix(_test.Cert2, filepath.Ext(_test.Cert2))
-	cert1Pem := filepath.Join(root, _test.TestDir, cert1+".pem")
-	cert1Der := filepath.Join(root, _test.TestDir, cert1+".der")
-	cert2Pem := filepath.Join(root, _test.TestDir, cert2+".pem")
-	cert2Der := filepath.Join(root, _test.TestDir, cert2+".der")
+	// Pepare certificate 1 paths
+	cert1 := strings.TrimSuffix(_test.Cert1Path, filepath.Ext(_test.Cert1Path))
+	cert1Pem := filepath.Join(root, _test.TestDirPath, cert1+".pem")
+	cert1Der := filepath.Join(root, _test.TestDirPath, cert1+".der")
 
+	// Prepare certificate 2 paths
+	cert2 := strings.TrimSuffix(_test.Cert2Path, filepath.Ext(_test.Cert2Path))
+	cert2Pem := filepath.Join(root, _test.TestDirPath, cert2+".pem")
+	cert2Der := filepath.Join(root, _test.TestDirPath, cert2+".der")
+
+	// Test load
 	wantCert1, err := os.ReadFile(cert1Pem)
 	if err != nil {
 		t.Errorf("unable load cert 1: %s", err)
@@ -166,9 +177,10 @@ func Test_convertEncryptionParameters(t *testing.T) {
 	wantCert1 = bytes.ReplaceAll(wantCert1, []byte{13, 10}, []byte{10})
 	wantCert2 = bytes.ReplaceAll(wantCert2, []byte{13, 10}, []byte{10})
 
+	// Prepare test cases
 	type args struct {
-		openSslPath string
-		toCerts     []string
+		pathOpenssl         string
+		pathEncryptionCerts []string
 	}
 	tests := []struct {
 		name    string
@@ -190,8 +202,8 @@ func Test_convertEncryptionParameters(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			// Load encryption keys
-			toCerts := make([][]byte, 0, len(tt.args.toCerts))
-			for _, recipientCert := range tt.args.toCerts {
+			toCerts := make([][]byte, 0, len(tt.args.pathEncryptionCerts))
+			for _, recipientCert := range tt.args.pathEncryptionCerts {
 				toCert, errLoad := os.ReadFile(recipientCert)
 				if errLoad != nil && recipientCert != "" {
 					t.Errorf("could not load recipient certificate: %s", errLoad)
@@ -200,12 +212,14 @@ func Test_convertEncryptionParameters(t *testing.T) {
 				toCerts = append(toCerts, toCert)
 			}
 
-			got, errPrepare := PrepareEncryptionKeys(tt.args.openSslPath, toCerts)
+			// Run test
+			got, errPrepare := PrepareEncryptionKeys(tt.args.pathOpenssl, toCerts)
 			if (errPrepare != nil) != tt.wantErr {
 				t.Errorf("PrepareEncryptionKeys() error = %v, wantErr %v", errPrepare, tt.wantErr)
 				return
 			}
 
+			// Check correct number
 			if len(got) != len(tt.want) {
 				t.Errorf("PrepareEncryptionKeys() number of certs got: '%v', want: '%v", len(got), len(tt.want))
 				return
@@ -224,10 +238,104 @@ func Test_convertEncryptionParameters(t *testing.T) {
 	}
 }
 
+func Test_sendMail(t *testing.T) {
+
+	// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
+	// only be reviewed manually
+
+	// Make sure all the variables needed for the tests are set
+	if _test.OpensslPath == "" {
+		t.Errorf("please configure the OpenSSL installation path and restart the test")
+		return
+	}
+
+	// Make sure all the variables needed for the tests are set
+	if _test.SmtpServer == "" ||
+		_test.SmtpPort == 0 {
+		t.Errorf("please configure the SMTP server and restart the test")
+		return
+	}
+
+	// Make sure all the variables needed for the tests are set
+	if _test.Cert1Path == "" ||
+		_test.Key1Path == "" ||
+		_test.RealRecipient.Address == "" {
+		t.Errorf("please configure the recipient details and restart the test")
+		return
+	}
+
+	// Prepare certificate paths
+	var toCerts []string
+	var toCertsDouble []string
+	if len(_test.RealCertPath) > 0 {
+		toCerts = append(toCerts, _test.RealCertPath)
+		toCertsDouble = append(toCertsDouble, _test.RealCertPath)
+		toCertsDouble = append(toCertsDouble, _test.RealCertPath)
+	}
+
+	// Prepare test cases
+	type args struct {
+		message      []byte
+		smtpServer   string
+		smtpPort     uint16
+		smtpUser     string
+		smtpPassword string
+
+		mailSubject    string
+		mailFrom       mail.Address
+		mailRecipients []mail.Address
+
+		pathOpenssl         string
+		pathSignatureCert   string
+		pathSignatureKey    string
+		pathEncryptionCerts []string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{"valid", args{[]byte("valid email, signed and optionally encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, false},
+		{"valid-no-subject", args{[]byte("valid email, signed and optionally encrypted, no subject"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, "", _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, false},
+		{"valid-no-message", args{[]byte(""), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject + " (signed and optionally encrypted, no content inside)", _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, false},
+		{"valid-multiple-recipients", args{[]byte("valid email, signed but not encrypted, sent to multiple recipients"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}, {"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCertsDouble}, false},
+		{"valid-no-signing", args{[]byte("valid email, not signed and optionally encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, "", "", toCerts}, false},
+		{"valid-no-encryption", args{[]byte("valid email, signed but not encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, []string{}}, false},
+		{"valid-plain", args{[]byte("valid email, not signed and not encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, "", "", "", []string{}}, false},
+
+		{"invalid-host", args{[]byte("some test message that should NOT be received"), "notexisting", _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, true},
+		{"invalid-from", args{[]byte("some test message that should NOT be received"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, mail.Address{"Test", "notexisting@test.com"}, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			// Run test
+			err := SendMail(
+				tt.args.smtpServer,
+				tt.args.smtpPort,
+				tt.args.smtpUser,
+				tt.args.smtpPassword,
+				tt.args.mailFrom,
+				tt.args.mailRecipients,
+				tt.args.mailSubject,
+				tt.args.message,
+				tt.args.pathOpenssl,
+				tt.args.pathSignatureCert,
+				tt.args.pathSignatureKey,
+				tt.args.pathEncryptionCerts,
+			)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SendMail() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+		})
+	}
+}
+
 func Test_certToPem(t *testing.T) {
 
 	// Make sure all the variables needed for the tests are set
-	if _test.OpensslPath == "" || _test.Cert1 == "" {
+	if _test.OpensslPath == "" || _test.Cert1Path == "" {
 		t.Errorf("please fill out the test configuration and restart the test")
 		return
 	}
@@ -240,8 +348,9 @@ func Test_certToPem(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
 
-	cert := strings.TrimSuffix(_test.Cert1, filepath.Ext(_test.Cert1))
-	cert = filepath.Join(root, _test.TestDir, cert)
+	// Prepare certificate paths
+	cert := strings.TrimSuffix(_test.Cert1Path, filepath.Ext(_test.Cert1Path))
+	cert = filepath.Join(root, _test.TestDirPath, cert)
 
 	// Load certificates
 	certDer, errRead := os.ReadFile(cert + ".der")
@@ -255,8 +364,9 @@ func Test_certToPem(t *testing.T) {
 		return
 	}
 
+	// Prepare test cases
 	type args struct {
-		opensslPath string
+		pathOpenssl string
 		cert        []byte
 	}
 	tests := []struct {
@@ -274,7 +384,7 @@ func Test_certToPem(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := certToPem(tt.args.opensslPath, tt.args.cert)
+			got, err := certToPem(tt.args.pathOpenssl, tt.args.cert)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("derToPem() error = '%v', wantErr '%v'", err, tt.wantErr)
 				return
@@ -294,7 +404,7 @@ func Test_certToPem(t *testing.T) {
 func Test_keyToPem(t *testing.T) {
 
 	// Make sure all the variables needed for the tests are set
-	if _test.OpensslPath == "" || _test.Key1 == "" {
+	if _test.OpensslPath == "" || _test.Key1Path == "" {
 		t.Errorf("please fill out the test configuration and restart the test")
 		return
 	}
@@ -307,8 +417,9 @@ func Test_keyToPem(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
 
-	key := strings.TrimSuffix(_test.Key1, filepath.Ext(_test.Key1))
-	key = filepath.Join(root, _test.TestDir, key)
+	// Prepare key paths
+	key := strings.TrimSuffix(_test.Key1Path, filepath.Ext(_test.Key1Path))
+	key = filepath.Join(root, _test.TestDirPath, key)
 
 	// Load Keys
 	keyDer, errRead := os.ReadFile(key + ".der")
@@ -316,14 +427,15 @@ func Test_keyToPem(t *testing.T) {
 		t.Errorf("unable to read file '%s': %s", key+".der", errRead)
 		return
 	}
-	keyPem, errRead := os.ReadFile(key + ".pem")
-	if errRead != nil {
-		t.Errorf("unable to read file '%s': %s", key+".pem", errRead)
+	keyPem, errRead2 := os.ReadFile(key + ".pem")
+	if errRead2 != nil {
+		t.Errorf("unable to read file '%s': %s", key+".pem", errRead2)
 		return
 	}
 
+	// Prepare test cases
 	type args struct {
-		opensslPath string
+		pathOpenssl string
 		key         []byte
 	}
 	tests := []struct {
@@ -341,7 +453,9 @@ func Test_keyToPem(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := keyToPem(tt.args.opensslPath, tt.args.key)
+
+			// Run test
+			got, err := keyToPem(tt.args.pathOpenssl, tt.args.key)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("derToPem() error = '%v', wantErr '%v'", err, tt.wantErr)
 				return
@@ -351,6 +465,7 @@ func Test_keyToPem(t *testing.T) {
 			got = bytes.ReplaceAll(got, []byte{13}, []byte{})
 			want := bytes.ReplaceAll(tt.want, []byte{13}, []byte{})
 
+			// Check result
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("derToPem() got = '%v',\nwant '%v'", got, want)
 			}
@@ -361,7 +476,7 @@ func Test_keyToPem(t *testing.T) {
 func Test_signMessage(t *testing.T) {
 
 	// Make sure all the variables needed for the tests are set
-	if _test.OpensslPath == "" || _test.Cert1 == "" || _test.Key1 == "" {
+	if _test.OpensslPath == "" || _test.Cert1Path == "" || _test.Key1Path == "" {
 		t.Errorf("please fill out the test configuration and restart the test")
 		return
 	}
@@ -374,20 +489,21 @@ func Test_signMessage(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
 
-	cert := strings.TrimSuffix(_test.Cert1, filepath.Ext(_test.Cert1))
-	certPem := filepath.Join(root, _test.TestDir, cert+".pem")
-	key := strings.TrimSuffix(_test.Key1, filepath.Ext(_test.Key1))
-	keyPem := filepath.Join(root, _test.TestDir, key+".pem")
+	// Prepare certificate paths
+	cert := strings.TrimSuffix(_test.Cert1Path, filepath.Ext(_test.Cert1Path))
+	certPem := filepath.Join(root, _test.TestDirPath, cert+".pem")
+	key := strings.TrimSuffix(_test.Key1Path, filepath.Ext(_test.Key1Path))
+	keyPem := filepath.Join(root, _test.TestDirPath, key+".pem")
 
 	// Define message
 	message := []byte("a very important signed test message")
 
 	// Unfortunately we are not able to compare the result, as sign is not deterministic !
 	type args struct {
-		message        []byte
-		openSslPath    string
-		senderCertPath string
-		senderKeyPath  string
+		message           []byte
+		pathOpenssl       string
+		pathSignatureCert string
+		pathSignatureKey  string
 	}
 	tests := []struct {
 		name    string
@@ -405,12 +521,15 @@ func Test_signMessage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			signed, err := signMessage(tt.args.openSslPath, tt.args.senderCertPath, tt.args.senderKeyPath, tt.args.message)
+
+			// Run test
+			signed, err := signMessage(tt.args.pathOpenssl, tt.args.pathSignatureCert, tt.args.pathSignatureKey, tt.args.message)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("sign() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
+			// Check for error
 			if err != nil {
 				return
 			}
@@ -418,7 +537,7 @@ func Test_signMessage(t *testing.T) {
 			// Create the command for verifying the signature. This is very similar to the singing process, so take this
 			// test with a grain of salt. Also have to include the -noverify flag, as we have a self signed certificate.
 			argsVerify := []string{"smime", "-verify", "-noverify"}
-			cmdVerify := exec.Command(tt.args.openSslPath, argsVerify...)
+			cmdVerify := exec.Command(tt.args.pathOpenssl, argsVerify...)
 
 			// Set the correct i/o buffers. Stream the signed message to stdin rather than saving it to a file.
 			in := bytes.NewReader(signed)
@@ -441,6 +560,7 @@ func Test_signMessage(t *testing.T) {
 			errsB := bytes.ReplaceAll(errs.Bytes(), []byte{13, 10}, []byte{10})
 			outB := bytes.ReplaceAll(out.Bytes(), []byte{13, 10}, []byte{10})
 
+			// Check output
 			if !bytes.Equal(outB, message) || string(errsB) != "Verification successful\n" {
 				t.Errorf("unable to verify signature. out: '%s', err: '%s'", string(outB), string(errsB))
 			}
@@ -451,7 +571,7 @@ func Test_signMessage(t *testing.T) {
 func Test_encryptMessage(t *testing.T) {
 
 	// Make sure all the variables needed for the tests are set
-	if _test.OpensslPath == "" || _test.Cert2 == "" || _test.Key2 == "" || _test.Cert1 == "" || _test.Key1 == "" {
+	if _test.OpensslPath == "" || _test.Cert2Path == "" || _test.Key2Path == "" || _test.Cert1Path == "" || _test.Key1Path == "" {
 		t.Errorf("please fill out the test configuration and restart the test")
 		return
 	}
@@ -464,16 +584,19 @@ func Test_encryptMessage(t *testing.T) {
 	}
 	root := filepath.Join(filepath.Dir(file), "..")
 
-	cert1 := strings.TrimSuffix(_test.Cert1, filepath.Ext(_test.Cert1))
-	cert1Pem := filepath.Join(root, _test.TestDir, cert1+".pem")
-	cert1Der := filepath.Join(root, _test.TestDir, cert1+".der")
-	cert2 := strings.TrimSuffix(_test.Cert2, filepath.Ext(_test.Cert2))
-	cert2Pem := filepath.Join(root, _test.TestDir, cert2+".pem")
-	key1 := strings.TrimSuffix(_test.Key1, filepath.Ext(_test.Key1))
-	key1Pem := filepath.Join(root, _test.TestDir, key1+".pem")
-	key1Der := filepath.Join(root, _test.TestDir, key1+".der")
-	key2 := strings.TrimSuffix(_test.Key2, filepath.Ext(_test.Key2))
-	key2Pem := filepath.Join(root, _test.TestDir, key2+".pem")
+	// Prepare certificate paths
+	cert1 := strings.TrimSuffix(_test.Cert1Path, filepath.Ext(_test.Cert1Path))
+	cert1Pem := filepath.Join(root, _test.TestDirPath, cert1+".pem")
+	cert1Der := filepath.Join(root, _test.TestDirPath, cert1+".der")
+	cert2 := strings.TrimSuffix(_test.Cert2Path, filepath.Ext(_test.Cert2Path))
+	cert2Pem := filepath.Join(root, _test.TestDirPath, cert2+".pem")
+
+	// Prepare key paths
+	key1 := strings.TrimSuffix(_test.Key1Path, filepath.Ext(_test.Key1Path))
+	key1Pem := filepath.Join(root, _test.TestDirPath, key1+".pem")
+	key1Der := filepath.Join(root, _test.TestDirPath, key1+".der")
+	key2 := strings.TrimSuffix(_test.Key2Path, filepath.Ext(_test.Key2Path))
+	key2Pem := filepath.Join(root, _test.TestDirPath, key2+".pem")
 
 	// Define subject, message and e-mail addresses
 	subject := "some encrypted test mail"
@@ -481,12 +604,12 @@ func Test_encryptMessage(t *testing.T) {
 
 	// Unfortunately we are not able to compare the result, as encrypt is not deterministic!
 	type args struct {
-		subject     string
-		message     []byte
-		openSslPath string
-		from        string
-		to          []string
-		toCerts     []string
+		subject             string
+		message             []byte
+		mailFrom            string
+		mailRecipients      []string
+		pathOpenssl         string
+		pathEncryptionCerts []string
 	}
 	tests := []struct {
 		name    string
@@ -494,42 +617,44 @@ func Test_encryptMessage(t *testing.T) {
 		keys    []string
 		wantErr bool
 	}{
-		{"valid-pem", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address}, []string{cert2Pem}}, []string{key2Pem}, false},
-		{"valid-der", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address}, []string{cert1Der}}, []string{key1Der}, false},
-		{"valid-no-subject", args{"", message, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address}, []string{cert2Pem}}, []string{key2Pem}, false},
-		{"valid-no-sender", args{subject, message, _test.OpensslPath, "", []string{_test.Recipient.Address}, []string{cert2Pem}}, []string{key2Pem}, false},
-		{"valid-multiple-recipients", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address, _test.Sender.Address}, []string{cert2Pem, cert1Pem}}, []string{key2Pem, key1Pem}, false},
-		{"valid-multiple-mixed-recipients", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{_test.Sender.Address, _test.Recipient.Address}, []string{cert1Pem, cert2Pem}}, []string{key1Pem, key2Pem}, false},
-		{"invalid-no-message", args{subject, []byte{}, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address}, []string{cert1Pem}}, []string{}, true},
-		{"invalid-nil-message", args{subject, nil, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address}, []string{cert1Pem}}, []string{}, true},
-		{"invalid-der", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address}, []string{filepath.Join(root, _test.TestDir, "notexisting.der")}}, []string{}, true},
-		{"invalid-exe", args{subject, message, "notexisting", _test.Sender.Address, []string{_test.Recipient.Address}, []string{cert1Pem}}, []string{}, true},
-		{"invalid-no-exe", args{subject, message, "", _test.Sender.Address, []string{_test.Recipient.Address}, []string{cert1Pem}}, []string{}, true},
-		{"invalid-no-recipients", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{}, []string{cert1Pem, cert2Pem}}, []string{}, true},
-		{"invalid-nil-recipients", args{subject, message, _test.OpensslPath, _test.Sender.Address, nil, []string{cert1Pem, cert2Pem}}, []string{}, true},
-		{"invalid-no-certs", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address, _test.Sender.Address}, []string{}}, []string{}, true},
-		{"invalid-nil-certs", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address, _test.Sender.Address}, nil}, []string{}, true},
-		{"invalid-not-enough-certs", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address, _test.Sender.Address}, []string{cert1Pem}}, []string{}, true},
-		{"invalid-not-enough-recipients", args{subject, message, _test.OpensslPath, _test.Sender.Address, []string{_test.Recipient.Address}, []string{cert1Pem, cert2Pem}}, []string{}, true},
+		{"valid-pem", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address}, _test.OpensslPath, []string{cert2Pem}}, []string{key2Pem}, false},
+		{"valid-der", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address}, _test.OpensslPath, []string{cert1Der}}, []string{key1Der}, false},
+		{"valid-no-subject", args{"", message, _test.MailFrom.Address, []string{_test.MailTo.Address}, _test.OpensslPath, []string{cert2Pem}}, []string{key2Pem}, false},
+		{"valid-no-sender", args{subject, message, "", []string{_test.MailTo.Address}, _test.OpensslPath, []string{cert2Pem}}, []string{key2Pem}, false},
+		{"valid-multiple-recipients", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address, _test.MailFrom.Address}, _test.OpensslPath, []string{cert2Pem, cert1Pem}}, []string{key2Pem, key1Pem}, false},
+		{"valid-multiple-mixed-recipients", args{subject, message, _test.MailFrom.Address, []string{_test.MailFrom.Address, _test.MailTo.Address}, _test.OpensslPath, []string{cert1Pem, cert2Pem}}, []string{key1Pem, key2Pem}, false},
+		{"invalid-no-message", args{subject, []byte{}, _test.MailFrom.Address, []string{_test.MailTo.Address}, _test.OpensslPath, []string{cert1Pem}}, []string{}, true},
+		{"invalid-nil-message", args{subject, nil, _test.MailFrom.Address, []string{_test.MailTo.Address}, _test.OpensslPath, []string{cert1Pem}}, []string{}, true},
+		{"invalid-der", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address}, _test.OpensslPath, []string{filepath.Join(root, _test.TestDirPath, "notexisting.der")}}, []string{}, true},
+		{"invalid-exe", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address}, "notexisting", []string{cert1Pem}}, []string{}, true},
+		{"invalid-no-exe", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address}, "", []string{cert1Pem}}, []string{}, true},
+		{"invalid-no-recipients", args{subject, message, _test.MailFrom.Address, []string{}, _test.OpensslPath, []string{cert1Pem, cert2Pem}}, []string{}, true},
+		{"invalid-nil-recipients", args{subject, message, _test.MailFrom.Address, nil, _test.OpensslPath, []string{cert1Pem, cert2Pem}}, []string{}, true},
+		{"invalid-no-certs", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address, _test.MailFrom.Address}, _test.OpensslPath, []string{}}, []string{}, true},
+		{"invalid-nil-certs", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address, _test.MailFrom.Address}, _test.OpensslPath, nil}, []string{}, true},
+		{"invalid-not-enough-certs", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address, _test.MailFrom.Address}, _test.OpensslPath, []string{cert1Pem}}, []string{}, true},
+		{"invalid-not-enough-recipients", args{subject, message, _test.MailFrom.Address, []string{_test.MailTo.Address}, _test.OpensslPath, []string{cert1Pem, cert2Pem}}, []string{}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			enc, err := encryptMessage(tt.args.openSslPath, tt.args.from, tt.args.to, tt.args.toCerts, tt.args.subject, tt.args.message)
+			enc, err := encryptMessage(tt.args.pathOpenssl, tt.args.mailFrom, tt.args.mailRecipients, tt.args.subject, tt.args.message, tt.args.pathEncryptionCerts)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("encrypt() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
+			// Check for error
 			if err != nil {
 				return
 			}
 
+			// Iterate keys to test with
 			for _, key := range tt.keys {
 
 				// Create the command for verifying the encryption. This is very similar to the encryption process, so
 				// take this test with a grain of salt.
 				argsDecrypt := []string{"smime", "-decrypt", "-inkey", key}
-				cmdDecrypt := exec.Command(tt.args.openSslPath, argsDecrypt...)
+				cmdDecrypt := exec.Command(tt.args.pathOpenssl, argsDecrypt...)
 
 				// Set the correct i/o buffers. Stream the encrypted message to stdin rather than saving it to a file.
 				in := bytes.NewReader(enc)
@@ -552,98 +677,10 @@ func Test_encryptMessage(t *testing.T) {
 				errsB := bytes.ReplaceAll(errs.Bytes(), []byte{13, 10}, []byte{10})
 				outB := bytes.ReplaceAll(out.Bytes(), []byte{13, 10}, []byte{10})
 
+				// Check result
 				if !bytes.Equal(outB, message) || string(errsB) != "" {
 					t.Errorf("unable to decrypt message. out: '%s', err: '%s'", string(outB), string(errsB))
 				}
-			}
-		})
-	}
-}
-
-// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
-// only be reviewed manually
-
-func Test_sendMail(t *testing.T) {
-
-	// Make sure all the variables needed for the tests are set
-	if _test.OpensslPath == "" {
-		t.Errorf("please configure the OpenSSL installation path and restart the test")
-		return
-	}
-
-	// Make sure all the variables needed for the tests are set
-	if _test.Server == "" ||
-		_test.Port == 0 {
-		t.Errorf("please configure the SMTP server and restart the test")
-		return
-	}
-
-	// Make sure all the variables needed for the tests are set
-	if _test.Cert1 == "" ||
-		_test.Key1 == "" ||
-		_test.RealRecipient.Address == "" {
-		t.Errorf("please configure the recipient details and restart the test")
-		return
-	}
-
-	var toCerts []string
-	var toCertsDouble []string
-	if len(_test.RealCert) > 0 {
-		toCerts = append(toCerts, _test.RealCert)
-		toCertsDouble = append(toCertsDouble, _test.RealCert)
-		toCertsDouble = append(toCertsDouble, _test.RealCert)
-	}
-
-	type args struct {
-		msg         []byte
-		server      string
-		port        uint16
-		username    string
-		password    string
-		subject     string
-		from        mail.Address
-		to          []mail.Address
-		opensslPath string
-		fromCert    string
-		fromKey     string
-		toCerts     []string
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
-		{"valid", args{[]byte("valid email"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, false},
-		{"valid-no-subject", args{[]byte("valid email, but no subject"), _test.Server, _test.Port, _test.Username, _test.Password, "", _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, false},
-		{"valid-no-message", args{[]byte(""), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject + " (no content inside)", _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, false},
-		{"valid-multiple-recipients", args{[]byte("valid email, sent to multiple recipients"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}, {"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCertsDouble}, false},
-		{"valid-no-signing", args{[]byte("valid email, not signed"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, "", "", toCerts}, false},
-		{"valid-no-encryption", args{[]byte("valid email, not encrypted"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, []string{}}, false},
-		{"valid-plain", args{[]byte("valid email, not signed and not encrypted"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, "", "", "", []string{}}, false},
-
-		{"invalid-host", args{[]byte("some test message that should NOT be received"), "notexisting", _test.Port, _test.Username, _test.Password, _test.Subject, _test.Sender, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, true},
-		{"invalid-from", args{[]byte("some test message that should NOT be received"), _test.Server, _test.Port, _test.Username, _test.Password, _test.Subject, mail.Address{"Test", "notexisting@test.com"}, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1, _test.Key1, toCerts}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-
-			err := SendMail(
-				tt.args.server,
-				tt.args.port,
-				tt.args.username,
-				tt.args.password,
-				tt.args.from,
-				tt.args.to,
-				tt.args.subject,
-				tt.args.msg,
-				tt.args.opensslPath,
-				tt.args.fromCert,
-				tt.args.fromKey,
-				tt.args.toCerts,
-			)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("SendMail() error = %v, wantErr %v", err, tt.wantErr)
-				return
 			}
 		})
 	}
