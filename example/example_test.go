@@ -74,7 +74,7 @@ func Test_example(t *testing.T) {
 	// prepares the necessary files as temporary files in the required format and uses them throughout
 	// its lifetime. You are responsible for cleaning them up on exit, Zap logger cannot not take care
 	// of that automatically!
-	defer func() { fnCleanup() }()
+	defer func() { _ = fnCleanup() }()
 
 	// Prepare SMTP core
 	smtpCore, errSmtpCore := ZapSmtp.NewDelayedCore(

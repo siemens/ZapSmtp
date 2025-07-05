@@ -59,19 +59,21 @@ func NewSmtpSyncer(
 	pathSignatureKey string, // Can be omitted if no signature is desired
 	pathEncryptionCerts []string, // Can be omitted if no encryption is desired
 
-) (*SmtpSyncer, func(), error) {
+) (*SmtpSyncer, func() error, error) {
+
+	fnNil := func() error { return nil }
 
 	// Check SMTP connection data
 	if smtpServer == "" {
-		return nil, func() {}, fmt.Errorf("no SMTP server provided")
+		return nil, fnNil, fmt.Errorf("no SMTP server provided")
 	}
 	if smtpPort == 0 {
-		return nil, func() {}, fmt.Errorf("no SMTP port provided")
+		return nil, fnNil, fmt.Errorf("no SMTP port provided")
 	}
 
 	// Check origination address
 	if mailFrom.Address == "" {
-		return nil, func() {}, fmt.Errorf("no sender provided")
+		return nil, fnNil, fmt.Errorf("no sender provided")
 	}
 
 	// Filter empty recipients
@@ -85,18 +87,18 @@ func NewSmtpSyncer(
 
 	// Check recipient address
 	if len(mailRecipients) == 0 {
-		return nil, func() {}, fmt.Errorf("no recipients provided")
+		return nil, fnNil, fmt.Errorf("no recipients provided")
 	}
 
 	// Check OpenSSL path if necessary
 	if (len(pathSignatureCert) > 0 || len(pathSignatureKey) > 0 || len(pathEncryptionCerts) > 0) && len(pathOpenssl) == 0 {
-		return nil, func() {}, fmt.Errorf("no Openssl path provided")
+		return nil, fnNil, fmt.Errorf("no Openssl path provided")
 	}
 
 	// Check certificate files if necessary
 	if (len(pathSignatureCert) > 0 && len(pathSignatureKey) == 0) ||
 		(len(pathSignatureCert) == 0 && len(pathSignatureKey) > 0) {
-		return nil, func() {}, fmt.Errorf("no certificate or key file provided")
+		return nil, fnNil, fmt.Errorf("no certificate or key file provided")
 	}
 
 	// Filter empty certificates
@@ -110,7 +112,7 @@ func NewSmtpSyncer(
 
 	// Check recipient certificate
 	if len(pathEncryptionCerts) > 0 && len(pathEncryptionCerts) != len(mailRecipients) {
-		return nil, func() {}, fmt.Errorf("invalid amount of recipient certificates provided")
+		return nil, fnNil, fmt.Errorf("invalid amount of recipient certificates provided")
 	}
 
 	// Prepare memory
@@ -132,17 +134,17 @@ func NewSmtpSyncer(
 		// Load signature certificate and key
 		signatureCert, err = os.ReadFile(pathSignatureCert)
 		if err != nil {
-			return nil, func() {}, fmt.Errorf("could not read sender certificate: %s", err)
+			return nil, fnNil, fmt.Errorf("could not read sender certificate: %s", err)
 		}
 		signatureKey, err = os.ReadFile(pathSignatureKey)
 		if err != nil {
-			return nil, func() {}, fmt.Errorf("could not read sender key: %s", err)
+			return nil, fnNil, fmt.Errorf("could not read sender key: %s", err)
 		}
 
 		// Convert signature certificate and key, if necessary
 		signatureCert, signatureKey, err = openssl.PrepareSignatureKeys(pathOpenssl, signatureCert, signatureKey)
 		if err != nil {
-			return nil, func() {}, fmt.Errorf("could not convert signature key: %s", err)
+			return nil, fnNil, fmt.Errorf("could not convert signature key: %s", err)
 		}
 
 		// Write signature certificate and key to temporary files for later usage
@@ -157,7 +159,7 @@ func NewSmtpSyncer(
 		for _, toCert := range pathEncryptionCerts {
 			recipientCert, errRead := os.ReadFile(toCert)
 			if errRead != nil {
-				return nil, func() {}, fmt.Errorf("could not read recipient certificate: %s", errRead)
+				return nil, fnNil, fmt.Errorf("could not read recipient certificate: %s", errRead)
 			}
 			encryptionCerts = append(encryptionCerts, recipientCert)
 		}
@@ -165,7 +167,7 @@ func NewSmtpSyncer(
 		// Convert encryption certificates, if necessary
 		encryptionCerts, err = openssl.PrepareEncryptionKeys(pathOpenssl, encryptionCerts)
 		if err != nil {
-			return nil, func() {}, fmt.Errorf("could not to convert encryption key: %s", err)
+			return nil, fnNil, fmt.Errorf("could not to convert encryption key: %s", err)
 		}
 
 		// Write encryption keys to temporary files for later usage
@@ -180,26 +182,27 @@ func NewSmtpSyncer(
 	}
 
 	// Prepare cleanup function to return
-	fnCleanup := func() {
+	fnCleanup := func() error {
 		_ = os.Remove(pathTmpSigCert)
 		_ = os.Remove(pathTmpSigKey)
 		for _, pathTmpEncCert := range pathTmpEncCerts {
 			_ = os.Remove(pathTmpEncCert)
 		}
+		return nil
 	}
 
 	// Cleanup and return error if temporary files could not be prepared
 	if errSaveTmpSigCert != nil {
-		fnCleanup()
-		return nil, func() {}, fmt.Errorf("could not prepare signature certificate: %s", errSaveTmpSigCert)
+		_ = fnCleanup()
+		return nil, fnNil, fmt.Errorf("could not prepare signature certificate: %s", errSaveTmpSigCert)
 	}
 	if errSaveTmpSigKey != nil {
-		fnCleanup()
-		return nil, func() {}, fmt.Errorf("could not prepare signature key: %s", errSaveTmpSigKey)
+		_ = fnCleanup()
+		return nil, fnNil, fmt.Errorf("could not prepare signature key: %s", errSaveTmpSigKey)
 	}
 	if errSaveTmpEncCert != nil {
-		fnCleanup()
-		return nil, func() {}, fmt.Errorf("could not prepare encryption key: %s", errSaveTmpEncCert)
+		_ = fnCleanup()
+		return nil, fnNil, fmt.Errorf("could not prepare encryption key: %s", errSaveTmpEncCert)
 	}
 
 	// Return initialized write syncer

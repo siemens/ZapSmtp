@@ -45,7 +45,7 @@ func Exmaple() {
 	// prepares the necessary files as temporary files in the required format and uses them throughout 
 	// its lifetime. You are responsible for cleaning them up on exit, Zap logger cannot not take care 
 	// of that automatically!
-    defer func() { fnCleanup() }()
+    defer func() { _ = fnCleanup() }()
 
     // Define the encoder
     enc := zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
