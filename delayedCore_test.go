@@ -1,7 +1,7 @@
 /*
 * ZapSmtp, a Zap (Golang) logger extension for sending urgent log messages via SMTP
 *
-* Copyright (c) Siemens AG, 2021.
+* Copyright (c) Siemens AG, 2021-2025.
 *
 * This work is licensed under the terms of the MIT license. For a copy, see the LICENSE file in the top-level
 * directory or visit <https://opensource.org/licenses/MIT>.
@@ -14,14 +14,15 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-	. "go.uber.org/zap/zapcore"
 	"io"
 	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+	. "go.uber.org/zap/zapcore"
 )
 
 // A Syncer is a spy for the Sync portion of zapcore.WriteSyncer.

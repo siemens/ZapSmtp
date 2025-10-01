@@ -1,3 +1,13 @@
+/*
+* ZapSmtp, a Zap (Golang) logger extension for sending urgent log messages via SMTP
+*
+* Copyright (c) Siemens AG, 2025.
+*
+* This work is licensed under the terms of the MIT license. For a copy, see the LICENSE file in the top-level
+* directory or visit <https://opensource.org/licenses/MIT>.
+*
+ */
+
 package smtp
 
 import (
