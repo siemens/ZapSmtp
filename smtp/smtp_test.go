@@ -11,9 +11,12 @@
 package smtp
 
 import (
-	"github.com/siemens/ZapSmtp/_test"
 	"net/mail"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/siemens/ZapSmtp/_test"
 )
 
 func Test_sendMail(t *testing.T) {
@@ -97,6 +100,7 @@ func Test_sendMail(t *testing.T) {
 				tt.args.mailRecipients,
 				tt.args.mailSubject,
 				tt.args.message,
+				nil,
 				tt.args.pathOpenssl,
 				tt.args.pathSignatureCert,
 				tt.args.pathSignatureKey,
@@ -104,6 +108,114 @@ func Test_sendMail(t *testing.T) {
 			)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("SendMail() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+		})
+	}
+}
+
+func Test_sendMail_attachment(t *testing.T) {
+
+	// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
+	// only be reviewed manually
+
+	// Make sure all the variables needed for the tests are set
+	if _test.OpensslPath == "" {
+		t.Errorf("please configure the OpenSSL installation path and restart the test")
+		return
+	}
+
+	// Make sure all the variables needed for the tests are set
+	if _test.SmtpServer == "" ||
+		_test.SmtpPort == 0 {
+		t.Errorf("please configure the SMTP server and restart the test")
+		return
+	}
+
+	// Make sure all the variables needed for the tests are set
+	if _test.Cert1Path == "" ||
+		_test.Key1Path == "" ||
+		_test.RealRecipient.Address == "" {
+		t.Errorf("please configure the recipient details and restart the test")
+		return
+	}
+
+	// Prepare test cases
+	type args struct {
+		message         []byte
+		attachmentPaths []string
+		smtpServer      string
+		smtpPort        uint16
+		smtpUser        string
+		smtpPassword    string
+
+		mailSubject    string
+		mailFrom       mail.Address
+		mailRecipients []mail.Address
+
+		pathOpenssl         string
+		pathSignatureCert   string
+		pathSignatureKey    string
+		pathEncryptionCerts []string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "attachment",
+			args: args{
+				[]byte("some test message with attachment"),
+				[]string{_test.Cert1Path},
+				_test.SmtpServer,
+				_test.SmtpPort,
+				_test.SmtpUser,
+				_test.SmtpPassword,
+				_test.MailSubject,
+				_test.MailFrom,
+				[]mail.Address{_test.RealRecipient},
+				_test.OpensslPath,
+				_test.Cert1Path,
+				_test.Key1Path,
+				nil,
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			// Read attachments
+			attachments := make(map[string][]byte)
+			for _, attachmentPath := range tt.args.attachmentPaths {
+				fileName := filepath.Base(attachmentPath)
+				fileBytes, errFileBytes := os.ReadFile(attachmentPath)
+				if errFileBytes != nil {
+					t.Errorf("Test_sendMail_attachment() could not read file: %v", errFileBytes)
+					return
+				}
+				attachments[fileName] = fileBytes
+			}
+
+			// Run test
+			err := SendMail(
+				tt.args.smtpServer,
+				tt.args.smtpPort,
+				tt.args.smtpUser,
+				tt.args.smtpPassword,
+				tt.args.mailFrom,
+				tt.args.mailRecipients,
+				tt.args.mailSubject,
+				tt.args.message,
+				attachments,
+				tt.args.pathOpenssl,
+				tt.args.pathSignatureCert,
+				tt.args.pathSignatureKey,
+				tt.args.pathEncryptionCerts,
+			)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Test_sendMail_attachment() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})

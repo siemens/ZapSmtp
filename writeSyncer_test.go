@@ -11,11 +11,12 @@
 package ZapSmtp
 
 import (
-	"github.com/siemens/ZapSmtp/_test"
 	"net/mail"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/siemens/ZapSmtp/_test"
 )
 
 // Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
@@ -82,6 +83,7 @@ func TestNewSmtpWriteSyncer(t *testing.T) {
 				_test.MailSubject,
 				tt.args.mailFrom,
 				tt.args.mailRecipients,
+				false,
 				tt.args.pathOpenssl,
 				tt.args.pathSignatureCert,
 				tt.args.pathSignatureKey,

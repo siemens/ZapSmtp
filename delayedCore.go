@@ -12,11 +12,12 @@ package ZapSmtp
 
 import (
 	"fmt"
+	"sync"
+	"time"
+
 	"go.uber.org/multierr"
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
-	"sync"
-	"time"
 )
 
 type DelayedCore struct {
@@ -125,14 +126,14 @@ func (c *DelayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 	if len(c.messages)+len(c.messagesPriority) >= 1000 {
 
 		// Cached messages are getting too much, SMTP delivery might not be guaranteed anymore, send messages now.
-		// A negative duration leads to the timer firing immediately.
+		// A negative duration triggers the timer immediately.
 		c.timer.Reset(-1)
 
 	} else if c.priority.Enabled(ent.Level) && len(c.messagesPriority) == 0 {
 
 		// Update the timer duration if this is the first entry with a priority level. In case the timer has already
 		// expired, we would reset it to a negative duration, because it is enforced that the priority delay is smaller
-		// than the regular delay. A negative duration leads to the timer firing immediately.
+		// than the regular delay. A negative duration triggers the timer immediately.
 		remainingDuration := c.delayPriority - time.Since(c.timerStartedAt)
 		c.timer.Reset(remainingDuration)
 	}
@@ -179,7 +180,7 @@ func (c *DelayedCore) Sync() error {
 	// Request mutex to avoid changes to messages while resetting everything
 	c.mutex.Lock()
 
-	// Return if there are no buffered messages, in case of race conditions
+	// Return if there are no buffered messages, necessary, if the Sync is called externally
 	if len(c.messagesPriority) == 0 && len(c.messages) == 0 {
 		c.mutex.Unlock()
 		return nil

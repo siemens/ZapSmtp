@@ -11,14 +11,15 @@
 package example
 
 import (
-	"github.com/siemens/ZapSmtp"
-	"github.com/siemens/ZapSmtp/_test"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"net/mail"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/siemens/ZapSmtp"
+	"github.com/siemens/ZapSmtp/_test"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func Test_example(t *testing.T) {
@@ -57,6 +58,8 @@ func Test_example(t *testing.T) {
 		"Example Logger",
 		_test.MailFrom,
 		[]mail.Address{_test.MailTo},
+
+		false,
 
 		_test.OpensslPath,
 		"",

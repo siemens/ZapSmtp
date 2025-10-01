@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"github.com/siemens/ZapSmtp/openssl"
+	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
 	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"os"
+	"path"
 	"strings"
+
+	"github.com/siemens/ZapSmtp/openssl"
 )
 
 // SendMail prepares the email message and sends it out via SMTP to a list of recipients.
@@ -26,6 +32,7 @@ func SendMail(
 	mailTo []mail.Address,
 	mailSubject string,
 	mailMessage []byte,
+	mailAttachments map[string][]byte, // Map of file name to content bytes
 
 	opensslPath string, // Can be omitted if neither signature nor encryption is desired
 	signatureCertPath string, // Path to the signature certificate of sender. Can be omitted if no signature is desired.
@@ -46,28 +53,17 @@ func SendMail(
 		toAddrs[i] = r.Address
 	}
 
-	// Prepare raw plaintext unsigned message
-	var messageRaw []byte
-
-	// Prepare unsigned message with required headers
-	var msg bytes.Buffer
-	msg.WriteString(fmt.Sprintf("From: %s\r\n", mailFrom.String()))
-	msg.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(toStrs, ", ")))
-	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", mailSubject))
-	msg.WriteString("MIME-Version: 1.0\r\n")
-	msg.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
-	msg.WriteString("Content-Transfer-Encoding: base64\r\n")
-	msg.WriteString("\r\n") // End of headers
-	msg.WriteString(base64.StdEncoding.EncodeToString(mailMessage))
-
-	// Assign unsigned plaintext message
-	messageRaw = msg.Bytes()
+	// Build mime message
+	messageRaw, err := buildMimeMessage(mailFrom, mailTo, mailSubject, mailMessage, mailAttachments)
+	if err != nil {
+		return fmt.Errorf("could not build MIME message: %w", err)
+	}
 
 	// Replace unsigned message with signed one
 	if len(signatureCertPath) > 0 || len(signatureKeyPath) > 0 {
 
 		// Sign message
-		messageSigned, errSign := openssl.SignMessage(opensslPath, signatureCertPath, signatureKeyPath, msg.Bytes())
+		messageSigned, errSign := openssl.SignMessage(opensslPath, signatureCertPath, signatureKeyPath, messageRaw)
 		if errSign != nil {
 			return fmt.Errorf("could not sign message: %s", errSign)
 		}
@@ -134,6 +130,7 @@ func SendMail2(
 	mailTo []mail.Address,
 	mailSubject string,
 	mailMessage []byte,
+	mailAttachments map[string][]byte, // Map of file name to content bytes
 
 	opensslPath string, // Can be omitted if neither signature nor encryption is desired
 	signatureCert []byte, // Signature certificate bytes of sender. Can be omitted if no signature is desired.
@@ -200,6 +197,7 @@ func SendMail2(
 		mailTo,
 		mailSubject,
 		mailMessage,
+		mailAttachments,
 		opensslPath,
 		signatureCertPath,
 		signatureKeyPath,
@@ -238,4 +236,68 @@ func SaveToTemp(data []byte, namePattern string) (string, error) {
 
 	// Return path of the temporary file
 	return path, nil
+}
+
+func buildMimeMessage(
+	mailFrom mail.Address,
+	mailTo []mail.Address,
+	mailSubject string,
+	mailMessage []byte,
+	mailAttachments map[string][]byte,
+) ([]byte, error) {
+
+	// Prepare memory
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	boundary := writer.Boundary()
+
+	// Write headers
+	toStrs := make([]string, len(mailTo))
+	for i, r := range mailTo {
+		toStrs[i] = r.String()
+	}
+	buf.WriteString(fmt.Sprintf("From: %s\r\n", mailFrom.String()))
+	buf.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(toStrs, ", ")))
+	buf.WriteString(fmt.Sprintf("Subject: %s\r\n", mailSubject))
+	buf.WriteString("MIME-Version: 1.0\r\n")
+	buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%q\r\n", boundary))
+	buf.WriteString("\r\n")
+
+	// Add plain text body
+	partHeader := textproto.MIMEHeader{}
+	partHeader.Set("Content-Type", "text/plain; charset=utf-8")
+	partHeader.Set("Content-Transfer-Encoding", "quoted-printable")
+	bodyPart, err := writer.CreatePart(partHeader)
+	if err != nil {
+		return nil, err
+	}
+	qpWriter := quotedprintable.NewWriter(bodyPart)
+	if _, errQpWrite := qpWriter.Write(mailMessage); errQpWrite != nil {
+		return nil, errQpWrite
+	}
+	_ = qpWriter.Close()
+
+	// Add attachments
+	for filename, content := range mailAttachments {
+		mimeType := mime.TypeByExtension(path.Ext(filename))
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		partHeaderAttachment := textproto.MIMEHeader{}
+		partHeaderAttachment.Set("Content-Type", fmt.Sprintf("%s; name=%q", mimeType, filename))
+		partHeaderAttachment.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+		partHeaderAttachment.Set("Content-Transfer-Encoding", "base64")
+		partWriter, errPartWriter := writer.CreatePart(partHeaderAttachment)
+		if errPartWriter != nil {
+			return nil, errPartWriter
+		}
+		b64Writer := base64.NewEncoder(base64.StdEncoding, partWriter)
+		if _, errWrite := b64Writer.Write(content); errWrite != nil {
+			return nil, errWrite
+		}
+		_ = b64Writer.Close()
+	}
+
+	_ = writer.Close()
+	return buf.Bytes(), nil
 }

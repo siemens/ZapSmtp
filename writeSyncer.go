@@ -12,10 +12,12 @@ package ZapSmtp
 
 import (
 	"fmt"
-	"github.com/siemens/ZapSmtp/openssl"
-	"github.com/siemens/ZapSmtp/smtp"
 	"net/mail"
 	"os"
+	"strings"
+
+	"github.com/siemens/ZapSmtp/openssl"
+	"github.com/siemens/ZapSmtp/smtp"
 )
 
 // SmtpSyncer implements the zapcore.WriteSyncer interface and provides a logger plugin for sending logs by mail
@@ -30,6 +32,8 @@ type SmtpSyncer struct {
 	mailSubject    string         // Subject to use for e-mails
 	mailFrom       mail.Address   // E-mail address of the sender
 	mailRecipients []mail.Address // E-mail addresses of recipients
+
+	attachAsFile bool // Whether the message body should be sent along as an attachment too
 
 	pathOpenssl         string
 	pathSignatureCert   string   // Path to the signature certificate to sign the mail with
@@ -54,6 +58,8 @@ func NewSmtpSyncer(
 	mailSubject string,
 	mailFrom mail.Address,
 	mailRecipients []mail.Address,
+
+	attachAsFile bool,
 
 	pathOpenssl string, // Can be omitted if neither signature nor encryption is desired
 	pathSignatureCert string, // Can be omitted if no signature is desired
@@ -217,6 +223,8 @@ func NewSmtpSyncer(
 		mailRecipients: mailRecipients,
 		mailSubject:    mailSubject,
 
+		attachAsFile: attachAsFile,
+
 		pathOpenssl:         pathOpenssl,
 		pathSignatureCert:   pathTmpSigCert,
 		pathSignatureKey:    pathTmpSigKey,
@@ -231,6 +239,12 @@ func (s *SmtpSyncer) Write(p []byte) (int, error) {
 		return 0, nil
 	}
 
+	// Prepare file attachment for mail
+	pAttachment := make(map[string][]byte)
+	if s.attachAsFile {
+		pAttachment[strings.ReplaceAll(strings.ToLower(s.mailSubject), " ", "_")+".txt"] = p
+	}
+
 	// Send log messages by mail
 	err := smtp.SendMail(
 		s.smtpServer,
@@ -241,6 +255,7 @@ func (s *SmtpSyncer) Write(p []byte) (int, error) {
 		s.mailRecipients,
 		s.mailSubject,
 		p,
+		pAttachment,
 		s.pathOpenssl,
 		s.pathSignatureCert,
 		s.pathSignatureKey,
