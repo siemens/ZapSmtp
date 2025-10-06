@@ -263,3 +263,62 @@ func SaveToTemp(data []byte, namePattern string) (string, error) {
 	// Return path of the temporary file
 	return tmpPath, nil
 }
+
+// SendMail is a small helper function that can be used to send an email with a single function call.
+func SendMail(
+	smtpServer string,
+	smtpPort uint16,
+	smtpUsername string,
+	smtpPassword string,
+	mailFrom mail.Address,
+	mailTo []mail.Address,
+	mailToCerts [][]byte,
+	mailSubject string,
+	mailBody []byte,
+	pathMailAttachments []string,
+	pathOpenssl string,
+	signatureCert []byte,
+	signatureKey []byte,
+	html bool,
+) error {
+
+	// Prepare Mailer
+	mlr := NewMailer(smtpServer, smtpPort)
+
+	// Make sure mailer is cleaned up
+	defer mlr.Close()
+
+	// Set authentication
+	mlr.SetAuth(smtpUsername, smtpPassword)
+
+	// Set OpenSSL path for optional signature or encryption
+	errOpenssl := mlr.SetOpenssl(pathOpenssl)
+	if errOpenssl != nil {
+		return errOpenssl
+	}
+
+	// Enable signature if desired
+	if signatureCert != nil && signatureKey != nil {
+		errSignature := mlr.SetSignature(signatureCert, signatureKey)
+		if errSignature != nil {
+			return errSignature
+		}
+	}
+
+	// Send mail
+	errMail := mlr.Send(
+		mailFrom,
+		mailTo,
+		mailToCerts,
+		mailSubject,
+		mailBody,
+		pathMailAttachments, // List of file paths to attach
+		html,
+	)
+	if errMail != nil {
+		return errMail
+	}
+
+	// Return nil as everything went fine
+	return nil
+}
