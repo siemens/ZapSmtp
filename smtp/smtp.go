@@ -11,112 +11,188 @@
 package smtp
 
 import (
-	"bytes"
-	"encoding/base64"
+	"errors"
 	"fmt"
-	"mime"
-	"mime/multipart"
-	"mime/quotedprintable"
 	"net/mail"
 	"net/smtp"
-	"net/textproto"
 	"os"
-	"path"
-	"strings"
 
 	"github.com/siemens/ZapSmtp/openssl"
 )
 
-// SendMail prepares the email message and sends it out via SMTP to a list of recipients.
-// If signature certificate and key are provided, it will automatically sign the message.
-// If encryption certificates are provided, it will automatically encrypt the message.
-// Signature and encryption is done by calling OpenSSL via exec.Command. Since only one argument
-// can be passed via Stdin, the signature/encryption keys/certificates must be passed as file paths.
-func SendMail(
-	smtpServer string,
-	smtpPort uint16,
-	smtpUser string, // Leave empty to skip authentication
-	smtpPassword string, // Leave empty to skip authentication
+type Mailer struct {
+	smtpServer string
+	smtpPort   uint16
 
-	mailFrom mail.Address,
-	mailTo []mail.Address,
-	mailSubject string,
-	mailMessage []byte,
-	mailAttachments map[string][]byte, // Map of file name to content bytes
+	// Authentication details (optional)
+	smtpUser     string
+	smtpPassword string
 
-	opensslPath string, // Can be omitted if neither signature nor encryption is desired
-	signatureCertPath string, // Path to the signature certificate of sender. Can be omitted if no signature is desired.
-	signatureKeyPath string, // Path to the signature key of sender. Can be omitted if no signature is desired.
-	encryptionCertPaths []string, // Paths to encryption keys of recipients. Can be omitted if no signature is desired.
+	// Signature and encryption details
+	pathOpenssl       string // Can be omitted if neither signature nor encryption is desired
+	pathSignatureCert string // path to the signature certificate of sender. Can be omitted if no signature is desired.
+	pathSignatureKey  string // path to the signature key of sender. Can be omitted if no signature is desired.
+}
+
+func (mailer *Mailer) SetAuth(username string, password string) {
+	mailer.smtpUser = username
+	mailer.smtpPassword = password
+}
+
+func (mailer *Mailer) SetOpenssl(path string) error {
+
+	// Verify path
+	if path != "" {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return ErrInvalidOpensslPath
+		}
+	}
+
+	// Set path
+	mailer.pathOpenssl = path
+
+	// Return nil as everything went fine
+	return nil
+}
+
+func (mailer *Mailer) SetSignature(signatureCert []byte, signatureKey []byte) error {
+
+	// Check if openssl is set
+	if mailer.pathOpenssl == "" {
+		return ErrInvalidOpensslPath
+	}
+
+	// Check for plausibility
+	if signatureCert == nil || signatureKey == nil {
+		return ErrInvalidSigCert
+	}
+
+	// Convert signature certificate and key if necessary
+	var err error
+	signatureCert, signatureKey, err = openssl.PrepareSignatureKeys(mailer.pathOpenssl, signatureCert, signatureKey)
+	if err != nil {
+		return fmt.Errorf("could not prepare signature certificate and key: %s", err)
+	}
+
+	// Write signing certificate to disk, where it can be used by OpenSSL
+	pathSignatureCert, errPathSignatureCert := SaveToTemp(signatureCert, "openssl-signature-cert-*.pem")
+	if errPathSignatureCert != nil {
+		return fmt.Errorf("could not prepare signature certificate: %s", errPathSignatureCert)
+	}
+
+	// Write signing key to disk, where it can be used by OpenSSL
+	pathSignatureKey, errPathSignatureKey := SaveToTemp(signatureKey, "openssl-signature-key-*.pem")
+	if errPathSignatureKey != nil {
+		return fmt.Errorf("could not prepare signature key: %s", errPathSignatureKey)
+	}
+
+	// Set signature certificate. Needs to be put into temporary file later, which
+	// will be done temporarily by the sending function to ensure proper cleanup.
+	mailer.pathSignatureCert = pathSignatureCert
+	mailer.pathSignatureKey = pathSignatureKey
+
+	// Return nil as everything went fine
+	return nil
+}
+
+func (mailer *Mailer) Send(
+	from mail.Address,
+	to []mail.Address,
+	toCerts [][]byte, // Optional encryption. One encryption certificate per recipient in 'to'.
+	subject string,
+	message []byte,
+	attachments []string, // List of file paths to attach
+	html bool,
 ) error {
 
-	// Check if right amount of certificates was passed
-	if len(encryptionCertPaths) > 0 && len(encryptionCertPaths) != len(mailTo) {
-		return fmt.Errorf("list of certificates does not match recipients")
+	// Prepare encryption certificates
+	pathEncryptionCerts := make([]string, 0, len(toCerts))
+	if len(toCerts) > 0 {
+
+		// Check if openssl is set
+		if mailer.pathOpenssl == "" {
+			return ErrInvalidOpensslPath
+		}
+
+		// Convert encryption certificates if necessary
+		var err error
+		toCerts, err = openssl.PrepareEncryptionKeys(mailer.pathOpenssl, toCerts)
+		if err != nil {
+			return fmt.Errorf("could not prepare encryption key: %s", err)
+		}
+
+		// Write encryption keys to disk, where it can be used by OpenSSL
+		for _, encryptionCert := range toCerts {
+
+			// Write certificate to disk
+			pathEncryptionCert, errPathEncryptionCert := SaveToTemp(encryptionCert, "openssl-encryption-cert-*.pem")
+			if errPathEncryptionCert != nil {
+				return fmt.Errorf("could not prepare encryption key: %s", errPathEncryptionCert)
+			}
+
+			// Cleanup temporary file on return
+			defer func() { _ = os.Remove(pathEncryptionCert) }()
+
+			// Remember path
+			pathEncryptionCerts = append(pathEncryptionCerts, pathEncryptionCert)
+		}
+	}
+
+	// Prepare mail
+	msg := mailer.newMessage(from, to, subject, message)
+
+	// Add attachments
+	errAttach := msg.Attach(attachments...)
+	if errAttach != nil {
+		return errAttach
+	}
+
+	// Enable signing if desired
+	if mailer.pathSignatureCert != "" {
+		errSign := msg.Sign()
+		if errSign != nil {
+			return errSign
+		}
+	}
+
+	// Enable encryption if desired
+	if len(pathEncryptionCerts) > 0 {
+		errEncrypt := msg.Encrypt(pathEncryptionCerts)
+		if errEncrypt != nil {
+			return errEncrypt
+		}
 	}
 
 	// Prepare some header values
-	toStrs := make([]string, len(mailTo))
-	toAddrs := make([]string, len(mailTo))
-	for i, r := range mailTo {
-		toStrs[i] = r.String()
-		toAddrs[i] = r.Address
+	msgRecipients := make([]string, len(to))
+	for i, r := range to {
+		msgRecipients[i] = r.Address
 	}
 
-	// Build mime message
-	messageRaw, err := buildMimeMessage(mailFrom, mailTo, mailSubject, mailMessage, mailAttachments)
-	if err != nil {
-		return fmt.Errorf("could not build MIME message: %w", err)
+	// Enable HTML if desired
+	if html {
+		msg.EnableHtml()
 	}
 
-	// Replace unsigned message with signed one
-	if len(signatureCertPath) > 0 || len(signatureKeyPath) > 0 {
-
-		// Sign message
-		messageSigned, errSign := openssl.SignMessage(opensslPath, signatureCertPath, signatureKeyPath, messageRaw)
-		if errSign != nil {
-			return fmt.Errorf("could not sign message: %s", errSign)
-		}
-
-		// Address OpenSSL bug
-		// OpenSSL tries to be helpful by converting \n to CRLF (\r\n), because email standards (RFC 5322, MIME) expect it.
-		// If input already uses Windows line endings (\r\n), OpenSSL might insert extra \r, resulting in \r\r\n or worse.
-		// This breaks Outlook and other S/MIME-compliant mail readers, because the structure becomes malformed.
-		messageSigned = bytes.Replace(messageSigned, []byte("\r\r\n"), []byte("\r\n"), -1)
-
-		// Prepare signed message with required headers (some got removed by OpenSSL)
-		var msgSigned bytes.Buffer
-		msgSigned.WriteString(fmt.Sprintf("From: %s\r\n", mailFrom.String()))
-		msgSigned.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(toStrs, ", ")))
-		msgSigned.WriteString(fmt.Sprintf("Subject: %s\r\n", mailSubject))
-		msgSigned.Write(messageSigned)
-
-		// Assign signed message
-		messageRaw = msgSigned.Bytes()
-	}
-
-	// Encrypt message if desired, indicated by input parameters
-	if len(encryptionCertPaths) > 0 {
-		var errEnc error
-		messageRaw, errEnc = openssl.EncryptMessage(opensslPath, mailFrom.Address, toAddrs, mailSubject, messageRaw, encryptionCertPaths)
-		if errEnc != nil {
-			return fmt.Errorf("could not encrypt message: %s", errEnc)
-		}
+	// Build mail message
+	msgCompiled, errMsgCompiled := msg.Message()
+	if errMsgCompiled != nil {
+		return errMsgCompiled
 	}
 
 	// Set authentication if desired
 	var auth smtp.Auth
-	if len(smtpUser) > 0 && len(smtpPassword) > 0 {
-		auth = smtp.PlainAuth("", smtpUser, smtpPassword, smtpServer)
+	if len(mailer.smtpUser) > 0 && len(mailer.smtpPassword) > 0 {
+		auth = smtp.PlainAuth("", mailer.smtpUser, mailer.smtpPassword, mailer.smtpServer)
 	}
 
 	// Connect to the server, authenticate, set the sender and recipient and send the email all in one step.
 	errSend := smtp.SendMail(
-		fmt.Sprintf("%s:%d", smtpServer, smtpPort),
+		fmt.Sprintf("%s:%d", mailer.smtpServer, mailer.smtpPort),
 		auth,
-		mailFrom.Address,
-		toAddrs,
-		messageRaw,
+		from.Address,
+		msgRecipients,
+		msgCompiled,
 	)
 	if errSend != nil {
 		return fmt.Errorf("could not send mail: %s", errSend)
@@ -126,93 +202,33 @@ func SendMail(
 	return nil
 }
 
-// SendMail2 is a wrapper function of the actual SendMail function receiving certificates/keys as []byte
-// rather than file paths. It will take care of creating the necessary temporary files and their cleanup.
-// Since only one argument can be passed to OpenSSL via Stdin, the signature/encryption keys/certificates
-// must be passed as file paths.
-func SendMail2(
-	smtpServer string,
-	smtpPort uint16,
-	smtpUser string, // Leave empty to skip authentication
-	smtpPassword string, // Leave empty to skip authentication
+// Close cleans up remaining temporary files
+func (mailer *Mailer) Close() {
+	_ = os.Remove(mailer.pathSignatureCert)
+	_ = os.Remove(mailer.pathSignatureKey)
+}
 
-	mailFrom mail.Address,
-	mailTo []mail.Address,
-	mailSubject string,
-	mailMessage []byte,
-	mailAttachments map[string][]byte, // Map of file name to content bytes
-
-	opensslPath string, // Can be omitted if neither signature nor encryption is desired
-	signatureCert []byte, // Signature certificate bytes of sender. Can be omitted if no signature is desired.
-	signatureKey []byte, // Signature key bytes of sender. Can be omitted if no signature is desired.
-	encryptionKeys [][]byte, // Encryption keys bytes of recipients. Can be omitted if no signature is desired.
-) error {
-
-	// Prepare memory
-	var signatureCertPath, signatureKeyPath string
-	var err error
-
-	// Prepare signature certificate and key
-	if len(signatureCert) > 0 && len(signatureKey) > 0 {
-
-		// Convert signature certificate and key if necessary
-		signatureCert, signatureKey, err = openssl.PrepareSignatureKeys(opensslPath, signatureCert, signatureKey)
-		if err != nil {
-			return fmt.Errorf("could not prepare signature key: %s", err)
-		}
-
-		// Write signing certificate to disk, where it can be used by OpenSSL
-		signatureCertPath, err = SaveToTemp(signatureCert, "openssl-signature-cert-*.pem")
-		if err != nil {
-			return fmt.Errorf("error with sender certificate: %s", err)
-		}
-		defer func() { _ = os.Remove(signatureCertPath) }()
-
-		// Write signing key to disk, where it can be used by OpenSSL
-		signatureKeyPath, err = SaveToTemp(signatureKey, "openssl-signature-key-*.pem")
-		if err != nil {
-			return fmt.Errorf("error with sender key: %s", err)
-		}
-		defer func() { _ = os.Remove(signatureKeyPath) }()
+// newMessage creates a basic message in the context of an existing Mailer. The Mailer
+func (mailer *Mailer) newMessage(from mail.Address, to []mail.Address, subject string, message []byte) *Message {
+	return &Message{
+		From:              from,
+		To:                to,
+		Subject:           subject,
+		rawMessage:        message,
+		rawAttachments:    make(map[string][]byte),
+		pathOpenssl:       mailer.pathOpenssl,
+		pathSignatureCert: mailer.pathSignatureCert,
+		pathSignatureKey:  mailer.pathSignatureKey,
 	}
+}
 
-	// Prepare encryption certificates
-	encryptionCertPaths := make([]string, 0, len(encryptionKeys))
-	if len(encryptionKeys) > 0 {
-
-		// Convert encryption certificates if necessary
-		encryptionKeys, err = openssl.PrepareEncryptionKeys(opensslPath, encryptionKeys)
-		if err != nil {
-			return fmt.Errorf("could not prepare encryption key: %s", err)
-		}
-
-		// Write encryption keys to disk, where it can be used by OpenSSL
-		for _, toCert := range encryptionKeys {
-			cert, errSave := SaveToTemp(toCert, "openssl-encryption-cert-*.pem")
-			if errSave != nil {
-				return fmt.Errorf("error with recipient certificate: %s", errSave)
-			}
-			defer func() { _ = os.Remove(cert) }()
-			encryptionCertPaths = append(encryptionCertPaths, cert)
-		}
+// NewMailer constructs a new mailer with basic configuration.
+// Detailed configuration needs to be set using the methods on Mailer.
+func NewMailer(smtpServer string, smtpPort uint16) *Mailer {
+	return &Mailer{
+		smtpServer: smtpServer,
+		smtpPort:   smtpPort,
 	}
-
-	// Call and return result of actual send mail function
-	return SendMail(
-		smtpServer,
-		smtpPort,
-		smtpUser,
-		smtpPassword,
-		mailFrom,
-		mailTo,
-		mailSubject,
-		mailMessage,
-		mailAttachments,
-		opensslPath,
-		signatureCertPath,
-		signatureKeyPath,
-		encryptionCertPaths,
-	)
 }
 
 // SaveToTemp writes data to a newly created temporary file. The name of the created file is returned.
@@ -223,91 +239,27 @@ func SaveToTemp(data []byte, namePattern string) (string, error) {
 	// Create temporary file and write the certificate to it
 	tmpFile, errTmp := os.CreateTemp("", namePattern)
 	if errTmp != nil {
-		return "", fmt.Errorf("could not create file: %s", errTmp)
+		return "", fmt.Errorf("could not create temporary file: %s", errTmp)
 	}
 
 	// Get the path
-	path := tmpFile.Name()
+	tmpPath := tmpFile.Name()
 
 	// Write data to the file
 	_, errWrite := tmpFile.Write(data)
 	if errWrite != nil {
 		_ = tmpFile.Close()
-		_ = os.Remove(path)
-		return "", fmt.Errorf("could not write: %s", errWrite)
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("could not write temporary file: %s", errWrite)
 	}
 
 	// Clean up the file descriptor - file needs to be removed later on.
 	errClose := tmpFile.Close()
 	if errClose != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("could not close file descriptor: %s", errClose)
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("could not close temporary file: %s", errClose)
 	}
 
 	// Return path of the temporary file
-	return path, nil
-}
-
-func buildMimeMessage(
-	mailFrom mail.Address,
-	mailTo []mail.Address,
-	mailSubject string,
-	mailMessage []byte,
-	mailAttachments map[string][]byte,
-) ([]byte, error) {
-
-	// Prepare memory
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-	boundary := writer.Boundary()
-
-	// Write headers
-	toStrs := make([]string, len(mailTo))
-	for i, r := range mailTo {
-		toStrs[i] = r.String()
-	}
-	buf.WriteString(fmt.Sprintf("From: %s\r\n", mailFrom.String()))
-	buf.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(toStrs, ", ")))
-	buf.WriteString(fmt.Sprintf("Subject: %s\r\n", mailSubject))
-	buf.WriteString("MIME-Version: 1.0\r\n")
-	buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%q\r\n", boundary))
-	buf.WriteString("\r\n")
-
-	// Add plain text body
-	partHeader := textproto.MIMEHeader{}
-	partHeader.Set("Content-Type", "text/plain; charset=utf-8")
-	partHeader.Set("Content-Transfer-Encoding", "quoted-printable")
-	bodyPart, err := writer.CreatePart(partHeader)
-	if err != nil {
-		return nil, err
-	}
-	qpWriter := quotedprintable.NewWriter(bodyPart)
-	if _, errQpWrite := qpWriter.Write(mailMessage); errQpWrite != nil {
-		return nil, errQpWrite
-	}
-	_ = qpWriter.Close()
-
-	// Add attachments
-	for filename, content := range mailAttachments {
-		mimeType := mime.TypeByExtension(path.Ext(filename))
-		if mimeType == "" {
-			mimeType = "application/octet-stream"
-		}
-		partHeaderAttachment := textproto.MIMEHeader{}
-		partHeaderAttachment.Set("Content-Type", fmt.Sprintf("%s; name=%q", mimeType, filename))
-		partHeaderAttachment.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-		partHeaderAttachment.Set("Content-Transfer-Encoding", "base64")
-		partWriter, errPartWriter := writer.CreatePart(partHeaderAttachment)
-		if errPartWriter != nil {
-			return nil, errPartWriter
-		}
-		b64Writer := base64.NewEncoder(base64.StdEncoding, partWriter)
-		if _, errWrite := b64Writer.Write(content); errWrite != nil {
-			return nil, errWrite
-		}
-		_ = b64Writer.Close()
-	}
-
-	_ = writer.Close()
-	return buf.Bytes(), nil
+	return tmpPath, nil
 }

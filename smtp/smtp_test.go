@@ -19,7 +19,7 @@ import (
 	"github.com/siemens/ZapSmtp/_test"
 )
 
-func Test_sendMail(t *testing.T) {
+func Test_Send(t *testing.T) {
 
 	// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
 	// only be reviewed manually
@@ -45,13 +45,32 @@ func Test_sendMail(t *testing.T) {
 		return
 	}
 
+	// Read signature certificate bytes
+	sigCert, errSigCert := os.ReadFile(_test.Cert1Path)
+	if errSigCert != nil {
+		t.Errorf("Could not read certificate: %v", errSigCert)
+		return
+	}
+	sigKey, errSigKey := os.ReadFile(_test.Key1Path)
+	if errSigKey != nil {
+		t.Errorf("Could not read certificate: %v", errSigKey)
+		return
+	}
+
 	// Prepare certificate paths
-	var toCerts []string
-	var toCertsDouble []string
+	var toCerts [][]byte
+	var toCertsDouble [][]byte
 	if len(_test.RealCertPath) > 0 {
-		toCerts = append(toCerts, _test.RealCertPath)
-		toCertsDouble = append(toCertsDouble, _test.RealCertPath)
-		toCertsDouble = append(toCertsDouble, _test.RealCertPath)
+
+		// Read encryption certificate bytes
+		data, errReadCert := os.ReadFile(_test.RealCertPath)
+		if errReadCert != nil {
+			t.Errorf("Could not read certificate: %v", errReadCert)
+			return
+		}
+		toCerts = append(toCerts, data)
+		toCertsDouble = append(toCertsDouble, data)
+		toCertsDouble = append(toCertsDouble, data)
 	}
 
 	// Prepare test cases
@@ -66,55 +85,190 @@ func Test_sendMail(t *testing.T) {
 		mailFrom       mail.Address
 		mailRecipients []mail.Address
 
-		pathOpenssl         string
-		pathSignatureCert   string
-		pathSignatureKey    string
-		pathEncryptionCerts []string
+		pathOpenssl     string
+		signatureCert   []byte
+		signatureKey    []byte
+		encryptionCerts [][]byte
 	}
 	tests := []struct {
 		name    string
 		args    args
 		wantErr bool
 	}{
-		{"valid", args{[]byte("valid email, signed and optionally encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, false},
-		{"valid-no-subject", args{[]byte("valid email, signed and optionally encrypted, no subject"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, "", _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, false},
-		{"valid-no-message", args{[]byte(""), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject + " (signed and optionally encrypted, no content inside)", _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, false},
-		{"valid-multiple-recipients", args{[]byte("valid email, signed but not encrypted, sent to multiple recipients"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}, {"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCertsDouble}, false},
-		{"valid-no-signing", args{[]byte("valid email, not signed and optionally encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, "", "", toCerts}, false},
-		{"valid-no-encryption", args{[]byte("valid email, signed but not encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, []string{}}, false},
-		{"valid-plain", args{[]byte("valid email, not signed and not encrypted"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, "", "", "", []string{}}, false},
+		{name: "valid", args: args{
+			message:         []byte("valid email, signed and optionally encrypted"),
+			smtpServer:      _test.SmtpServer,
+			smtpPort:        _test.SmtpPort,
+			smtpUser:        _test.SmtpUser,
+			smtpPassword:    _test.SmtpPassword,
+			mailSubject:     _test.MailSubject,
+			mailFrom:        _test.MailFrom,
+			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			pathOpenssl:     _test.OpensslPath,
+			signatureCert:   sigCert,
+			signatureKey:    sigKey,
+			encryptionCerts: toCerts,
+		}},
+		{name: "valid-no-subject", args: args{
+			message:         []byte("valid email, signed and optionally encrypted, no subject"),
+			smtpServer:      _test.SmtpServer,
+			smtpPort:        _test.SmtpPort,
+			smtpUser:        _test.SmtpUser,
+			smtpPassword:    _test.SmtpPassword,
+			mailSubject:     "",
+			mailFrom:        _test.MailFrom,
+			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			pathOpenssl:     _test.OpensslPath,
+			signatureCert:   sigCert,
+			signatureKey:    sigKey,
+			encryptionCerts: toCerts,
+		}},
+		{name: "valid-no-message", args: args{
+			message:         []byte(""),
+			smtpServer:      _test.SmtpServer,
+			smtpPort:        _test.SmtpPort,
+			smtpUser:        _test.SmtpUser,
+			smtpPassword:    _test.SmtpPassword,
+			mailSubject:     _test.MailSubject + " (signed and optionally encrypted, no content inside)",
+			mailFrom:        _test.MailFrom,
+			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			pathOpenssl:     _test.OpensslPath,
+			signatureCert:   sigCert,
+			signatureKey:    sigKey,
+			encryptionCerts: toCerts,
+		}},
+		{name: "valid-multiple-recipients", args: args{
+			message:         []byte("valid email, signed and encrypted, sent to multiple recipients"),
+			smtpServer:      _test.SmtpServer,
+			smtpPort:        _test.SmtpPort,
+			smtpUser:        _test.SmtpUser,
+			smtpPassword:    _test.SmtpPassword,
+			mailSubject:     _test.MailSubject,
+			mailFrom:        _test.MailFrom,
+			mailRecipients:  []mail.Address{{"Test 1", _test.RealRecipient.Address}, {_test.MailTo.Name, _test.MailTo.Address}},
+			pathOpenssl:     _test.OpensslPath,
+			signatureCert:   sigCert,
+			signatureKey:    sigKey,
+			encryptionCerts: toCertsDouble,
+		}},
+		{name: "valid-no-signing", args: args{
+			message:         []byte("valid email, not signed and optionally encrypted"),
+			smtpServer:      _test.SmtpServer,
+			smtpPort:        _test.SmtpPort,
+			smtpUser:        _test.SmtpUser,
+			smtpPassword:    _test.SmtpPassword,
+			mailSubject:     _test.MailSubject,
+			mailFrom:        _test.MailFrom,
+			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			pathOpenssl:     _test.OpensslPath,
+			signatureCert:   nil,
+			signatureKey:    nil,
+			encryptionCerts: toCerts,
+		}},
+		{name: "valid-no-encryption", args: args{
+			message:         []byte("valid email, signed but not encrypted"),
+			smtpServer:      _test.SmtpServer,
+			smtpPort:        _test.SmtpPort,
+			smtpUser:        _test.SmtpUser,
+			smtpPassword:    _test.SmtpPassword,
+			mailSubject:     _test.MailSubject,
+			mailFrom:        _test.MailFrom,
+			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			pathOpenssl:     _test.OpensslPath,
+			signatureCert:   sigCert,
+			signatureKey:    sigKey,
+			encryptionCerts: nil,
+		}},
+		{name: "valid-plain", args: args{
+			message:         []byte("valid email, not signed and not encrypted"),
+			smtpServer:      _test.SmtpServer,
+			smtpPort:        _test.SmtpPort,
+			smtpUser:        _test.SmtpUser,
+			smtpPassword:    _test.SmtpPassword,
+			mailSubject:     _test.MailSubject,
+			mailFrom:        _test.MailFrom,
+			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			signatureCert:   nil,
+			signatureKey:    nil,
+			encryptionCerts: nil,
+		}},
 
-		{"invalid-host", args{[]byte("some test message that should NOT be received"), "notexisting", _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, _test.MailFrom, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, true},
-		{"invalid-from", args{[]byte("some test message that should NOT be received"), _test.SmtpServer, _test.SmtpPort, _test.SmtpUser, _test.SmtpPassword, _test.MailSubject, mail.Address{"Test", "notexisting@test.com"}, []mail.Address{{"Test", _test.RealRecipient.Address}}, _test.OpensslPath, _test.Cert1Path, _test.Key1Path, toCerts}, true},
+		{name: "invalid-host", args: args{
+			message:         []byte("some test message that should NOT be received"),
+			smtpServer:      "notexisting",
+			smtpPort:        _test.SmtpPort,
+			smtpUser:        _test.SmtpUser,
+			smtpPassword:    _test.SmtpPassword,
+			mailSubject:     _test.MailSubject,
+			mailFrom:        _test.MailFrom,
+			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			pathOpenssl:     _test.OpensslPath,
+			signatureCert:   nil,
+			signatureKey:    nil,
+			encryptionCerts: nil,
+		}, wantErr: true},
+		{name: "invalid-from", args: args{
+			message:         []byte("some test message that should NOT be received"),
+			smtpServer:      _test.SmtpServer,
+			smtpPort:        _test.SmtpPort,
+			smtpUser:        _test.SmtpUser,
+			smtpPassword:    _test.SmtpPassword,
+			mailSubject:     _test.MailSubject,
+			mailFrom:        mail.Address{"Test", "notexisting@domian.tld"},
+			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			pathOpenssl:     _test.OpensslPath,
+			signatureCert:   nil,
+			signatureKey:    nil,
+			encryptionCerts: nil,
+		}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
+			// Initialize mailer
+			mlr := NewMailer(tt.args.smtpServer, tt.args.smtpPort)
+
+			// Cleanup
+			defer mlr.Close()
+
+			// Set mailer auth
+			mlr.SetAuth(tt.args.smtpUser, tt.args.smtpPassword)
+
+			// Configure OpenSSL
+			errOpenssl := mlr.SetOpenssl(tt.args.pathOpenssl)
+			if errOpenssl != nil {
+				t.Errorf("Send() OpenSSL error: %v", errOpenssl)
+				return
+			}
+
+			// Prepare signature
+			if tt.args.signatureCert != nil || tt.args.signatureKey != nil {
+				errSignature := mlr.SetSignature(tt.args.signatureCert, tt.args.signatureKey)
+				if errSignature != nil {
+					t.Errorf("Send() Signature error: %v", errSignature)
+					return
+				}
+			}
+
 			// Run test
-			err := SendMail(
-				tt.args.smtpServer,
-				tt.args.smtpPort,
-				tt.args.smtpUser,
-				tt.args.smtpPassword,
+			err := mlr.Send(
 				tt.args.mailFrom,
 				tt.args.mailRecipients,
+				tt.args.encryptionCerts, // One encryption certificate per recipient
 				tt.args.mailSubject,
 				tt.args.message,
-				nil,
-				tt.args.pathOpenssl,
-				tt.args.pathSignatureCert,
-				tt.args.pathSignatureKey,
-				tt.args.pathEncryptionCerts,
+				nil, // List of file paths to attach
+				false,
 			)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SendMail() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Send() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})
 	}
 }
 
-func Test_sendMail_attachment(t *testing.T) {
+func Test_send_attachment(t *testing.T) {
 
 	// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
 	// only be reviewed manually
@@ -138,6 +292,34 @@ func Test_sendMail_attachment(t *testing.T) {
 		_test.RealRecipient.Address == "" {
 		t.Errorf("please configure the recipient details and restart the test")
 		return
+	}
+
+	// Read signature certificate bytes
+	sigCert, errSigCert := os.ReadFile(_test.Cert1Path)
+	if errSigCert != nil {
+		t.Errorf("Could not read certificate: %v", errSigCert)
+		return
+	}
+	sigKey, errSigKey := os.ReadFile(_test.Key1Path)
+	if errSigKey != nil {
+		t.Errorf("Could not read certificate: %v", errSigKey)
+		return
+	}
+
+	// Prepare certificate paths
+	var toCerts [][]byte
+	var toCertsDouble [][]byte
+	if len(_test.RealCertPath) > 0 {
+
+		// Read encryption certificate bytes
+		data, errReadCert := os.ReadFile(_test.RealCertPath)
+		if errReadCert != nil {
+			t.Errorf("Could not read certificate: %v", errReadCert)
+			return
+		}
+		toCerts = append(toCerts, data)
+		toCertsDouble = append(toCertsDouble, data)
+		toCertsDouble = append(toCertsDouble, data)
 	}
 
 	// Prepare test cases
@@ -153,10 +335,10 @@ func Test_sendMail_attachment(t *testing.T) {
 		mailFrom       mail.Address
 		mailRecipients []mail.Address
 
-		pathOpenssl         string
-		pathSignatureCert   string
-		pathSignatureKey    string
-		pathEncryptionCerts []string
+		pathOpenssl     string
+		signatureCert   []byte
+		signatureKey    []byte
+		encryptionCerts [][]byte
 	}
 	tests := []struct {
 		name    string
@@ -164,21 +346,78 @@ func Test_sendMail_attachment(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "attachment",
+			name: "valid-attachment",
 			args: args{
-				[]byte("some test message with attachment"),
-				[]string{_test.Cert1Path},
-				_test.SmtpServer,
-				_test.SmtpPort,
-				_test.SmtpUser,
-				_test.SmtpPassword,
-				_test.MailSubject,
-				_test.MailFrom,
-				[]mail.Address{_test.RealRecipient},
-				_test.OpensslPath,
-				_test.Cert1Path,
-				_test.Key1Path,
-				nil,
+				message:         []byte("valid email, signed and optionally encrypted, with attachment"),
+				attachmentPaths: []string{_test.Cert1Path},
+				smtpServer:      _test.SmtpServer,
+				smtpPort:        _test.SmtpPort,
+				smtpUser:        _test.SmtpUser,
+				smtpPassword:    _test.SmtpPassword,
+				mailSubject:     _test.MailSubject,
+				mailFrom:        _test.MailFrom,
+				mailRecipients:  []mail.Address{_test.RealRecipient},
+				pathOpenssl:     _test.OpensslPath,
+				signatureCert:   sigCert,
+				signatureKey:    sigKey,
+				encryptionCerts: toCerts,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid-attachment-no-signing",
+			args: args{
+				message:         []byte("valid email, not signed and optionally encrypted, with attachment"),
+				attachmentPaths: []string{_test.Cert1Path},
+				smtpServer:      _test.SmtpServer,
+				smtpPort:        _test.SmtpPort,
+				smtpUser:        _test.SmtpUser,
+				smtpPassword:    _test.SmtpPassword,
+				mailSubject:     _test.MailSubject,
+				mailFrom:        _test.MailFrom,
+				mailRecipients:  []mail.Address{_test.RealRecipient},
+				pathOpenssl:     _test.OpensslPath,
+				signatureCert:   nil,
+				signatureKey:    nil,
+				encryptionCerts: toCerts,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid-attachment-no-encryption",
+			args: args{
+				message:         []byte("valid email, signed but not encrypted, with attachment"),
+				attachmentPaths: []string{_test.Cert1Path},
+				smtpServer:      _test.SmtpServer,
+				smtpPort:        _test.SmtpPort,
+				smtpUser:        _test.SmtpUser,
+				smtpPassword:    _test.SmtpPassword,
+				mailSubject:     _test.MailSubject,
+				mailFrom:        _test.MailFrom,
+				mailRecipients:  []mail.Address{_test.RealRecipient},
+				pathOpenssl:     _test.OpensslPath,
+				signatureCert:   sigCert,
+				signatureKey:    sigKey,
+				encryptionCerts: nil,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid-attachment-no-signing-no-encryption",
+			args: args{
+				message:         []byte("valid email, not signed and not encrypted, with attachment"),
+				attachmentPaths: []string{_test.Cert1Path},
+				smtpServer:      _test.SmtpServer,
+				smtpPort:        _test.SmtpPort,
+				smtpUser:        _test.SmtpUser,
+				smtpPassword:    _test.SmtpPassword,
+				mailSubject:     _test.MailSubject,
+				mailFrom:        _test.MailFrom,
+				mailRecipients:  []mail.Address{_test.RealRecipient},
+				pathOpenssl:     _test.OpensslPath,
+				signatureCert:   nil,
+				signatureKey:    nil,
+				encryptionCerts: nil,
 			},
 			wantErr: false,
 		},
@@ -192,30 +431,49 @@ func Test_sendMail_attachment(t *testing.T) {
 				fileName := filepath.Base(attachmentPath)
 				fileBytes, errFileBytes := os.ReadFile(attachmentPath)
 				if errFileBytes != nil {
-					t.Errorf("Test_sendMail_attachment() could not read file: %v", errFileBytes)
+					t.Errorf("Test_send_attachment() could not read file: %v", errFileBytes)
 					return
 				}
 				attachments[fileName] = fileBytes
 			}
 
+			// Initialize mailer
+			mlr := NewMailer(tt.args.smtpServer, tt.args.smtpPort)
+
+			// Cleanup
+			defer mlr.Close()
+
+			// Set mailer auth
+			mlr.SetAuth(tt.args.smtpUser, tt.args.smtpPassword)
+
+			// Configure OpenSSL
+			errOpenssl := mlr.SetOpenssl(tt.args.pathOpenssl)
+			if errOpenssl != nil {
+				t.Errorf("Send() OpenSSL error: %v", errOpenssl)
+				return
+			}
+
+			// Prepare signature
+			if tt.args.signatureCert != nil || tt.args.signatureKey != nil {
+				errSignature := mlr.SetSignature(tt.args.signatureCert, tt.args.signatureKey)
+				if errSignature != nil {
+					t.Errorf("Send() Signature error: %v", errSignature)
+					return
+				}
+			}
+
 			// Run test
-			err := SendMail(
-				tt.args.smtpServer,
-				tt.args.smtpPort,
-				tt.args.smtpUser,
-				tt.args.smtpPassword,
+			err := mlr.Send(
 				tt.args.mailFrom,
 				tt.args.mailRecipients,
+				tt.args.encryptionCerts, // One encryption certificate per recipient
 				tt.args.mailSubject,
 				tt.args.message,
-				attachments,
-				tt.args.pathOpenssl,
-				tt.args.pathSignatureCert,
-				tt.args.pathSignatureKey,
-				tt.args.pathEncryptionCerts,
+				tt.args.attachmentPaths, // List of file paths to attach
+				false,
 			)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Test_sendMail_attachment() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Send() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})

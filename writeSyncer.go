@@ -35,10 +35,10 @@ type SmtpSyncer struct {
 
 	attachAsFile bool // Whether the message body should be sent along as an attachment too
 
-	pathOpenssl         string
-	pathSignatureCert   string   // Path to the signature certificate to sign the mail with
-	pathSignatureKey    string   // Path to the signature key to sign the mail with
-	pathEncryptionCerts []string // Path to the encryption certificates to sign the mail with, one per recipient
+	pathOpenssl     string
+	signatureCert   []byte   // Path to the signature certificate to sign the mail with
+	signatureKey    []byte   // Path to the signature key to sign the mail with
+	encryptionCerts [][]byte // Path to the encryption certificates to sign the mail with, one per recipient
 }
 
 // NewSmtpSyncer returns a zap.SmtpSyncer. It will save the needed certificate and key files every time a mail
@@ -47,7 +47,7 @@ type SmtpSyncer struct {
 //   - All the key and certificate files MUST NOT be password protected.
 //   - All the key and certificate files MUST BE in either PEM or DER format.
 //   - If neither key nor certificates files are provided the pathOpenssl won't be used.
-//   - If pathEncryptionCerts are provided the amount must match the number of recipients. The order does not matter though.
+//   - If encryptionCerts are provided the amount must match the number of recipients. The order does not matter though.
 //     It is not possible to encrypt the message for only a subset of recipients.
 func NewSmtpSyncer(
 	smtpServer string,
@@ -66,21 +66,19 @@ func NewSmtpSyncer(
 	pathSignatureKey string, // Can be omitted if no signature is desired
 	pathEncryptionCerts []string, // Can be omitted if no encryption is desired
 
-) (*SmtpSyncer, func() error, error) {
-
-	fnNil := func() error { return nil }
+) (*SmtpSyncer, error) {
 
 	// Check SMTP connection data
 	if smtpServer == "" {
-		return nil, fnNil, fmt.Errorf("no SMTP server provided")
+		return nil, fmt.Errorf("no SMTP server provided")
 	}
 	if smtpPort == 0 {
-		return nil, fnNil, fmt.Errorf("no SMTP port provided")
+		return nil, fmt.Errorf("no SMTP port provided")
 	}
 
 	// Check origination address
 	if mailFrom.Address == "" {
-		return nil, fnNil, fmt.Errorf("no sender provided")
+		return nil, fmt.Errorf("no sender provided")
 	}
 
 	// Filter empty recipients
@@ -94,18 +92,18 @@ func NewSmtpSyncer(
 
 	// Check recipient address
 	if len(mailRecipients) == 0 {
-		return nil, fnNil, fmt.Errorf("no recipients provided")
+		return nil, fmt.Errorf("no recipients provided")
 	}
 
 	// Check OpenSSL path if necessary
 	if (len(pathSignatureCert) > 0 || len(pathSignatureKey) > 0 || len(pathEncryptionCerts) > 0) && len(pathOpenssl) == 0 {
-		return nil, fnNil, fmt.Errorf("no Openssl path provided")
+		return nil, fmt.Errorf("no Openssl path provided")
 	}
 
 	// Check certificate files if necessary
 	if (len(pathSignatureCert) > 0 && len(pathSignatureKey) == 0) ||
 		(len(pathSignatureCert) == 0 && len(pathSignatureKey) > 0) {
-		return nil, fnNil, fmt.Errorf("no certificate or key file provided")
+		return nil, fmt.Errorf("no certificate or key file provided")
 	}
 
 	// Filter empty certificates
@@ -119,7 +117,7 @@ func NewSmtpSyncer(
 
 	// Check recipient certificate
 	if len(pathEncryptionCerts) > 0 && len(pathEncryptionCerts) != len(mailRecipients) {
-		return nil, fnNil, fmt.Errorf("invalid amount of recipient certificates provided")
+		return nil, fmt.Errorf("invalid amount of recipient certificates provided")
 	}
 
 	// Prepare memory
@@ -128,35 +126,24 @@ func NewSmtpSyncer(
 	var signatureKey []byte
 	var encryptionCerts = make([][]byte, 0, len(pathEncryptionCerts))
 
-	var pathTmpSigCert string
-	var errSaveTmpSigCert error
-	var pathTmpSigKey string
-	var errSaveTmpSigKey error
-	var pathTmpEncCerts = make([]string, 0, len(encryptionCerts))
-	var errSaveTmpEncCert error
-
 	// Load and convert signature certificate and key, if necessary
 	if len(pathSignatureCert) > 0 && len(pathSignatureKey) > 0 {
 
 		// Load signature certificate and key
 		signatureCert, err = os.ReadFile(pathSignatureCert)
 		if err != nil {
-			return nil, fnNil, fmt.Errorf("could not read sender certificate: %s", err)
+			return nil, fmt.Errorf("could not read sender certificate: %s", err)
 		}
 		signatureKey, err = os.ReadFile(pathSignatureKey)
 		if err != nil {
-			return nil, fnNil, fmt.Errorf("could not read sender key: %s", err)
+			return nil, fmt.Errorf("could not read sender key: %s", err)
 		}
 
 		// Convert signature certificate and key, if necessary
 		signatureCert, signatureKey, err = openssl.PrepareSignatureKeys(pathOpenssl, signatureCert, signatureKey)
 		if err != nil {
-			return nil, fnNil, fmt.Errorf("could not convert signature key: %s", err)
+			return nil, fmt.Errorf("could not convert signature key: %s", err)
 		}
-
-		// Write signature certificate and key to temporary files for later usage
-		pathTmpSigCert, errSaveTmpSigCert = smtp.SaveToTemp(signatureCert, "openssl-signature-cert-*.pem")
-		pathTmpSigKey, errSaveTmpSigKey = smtp.SaveToTemp(signatureKey, "openssl-signature-key-*.pem")
 	}
 
 	// Load and convert encryption certificates, if necessary
@@ -166,7 +153,7 @@ func NewSmtpSyncer(
 		for _, toCert := range pathEncryptionCerts {
 			recipientCert, errRead := os.ReadFile(toCert)
 			if errRead != nil {
-				return nil, fnNil, fmt.Errorf("could not read recipient certificate: %s", errRead)
+				return nil, fmt.Errorf("could not read recipient certificate: %s", errRead)
 			}
 			encryptionCerts = append(encryptionCerts, recipientCert)
 		}
@@ -174,42 +161,8 @@ func NewSmtpSyncer(
 		// Convert encryption certificates, if necessary
 		encryptionCerts, err = openssl.PrepareEncryptionKeys(pathOpenssl, encryptionCerts)
 		if err != nil {
-			return nil, fnNil, fmt.Errorf("could not to convert encryption key: %s", err)
+			return nil, fmt.Errorf("could not to convert encryption key: %s", err)
 		}
-
-		// Write encryption keys to temporary files for later usage
-		for _, encryptionCert := range encryptionCerts {
-			var pathTmpEncCert string
-			pathTmpEncCert, errSaveTmpEncCert = smtp.SaveToTemp(encryptionCert, "openssl-encryption-cert-*.pem")
-			if errSaveTmpEncCert != nil {
-				break
-			}
-			pathTmpEncCerts = append(pathTmpEncCerts, pathTmpEncCert)
-		}
-	}
-
-	// Prepare cleanup function to return
-	fnCleanup := func() error {
-		_ = os.Remove(pathTmpSigCert)
-		_ = os.Remove(pathTmpSigKey)
-		for _, pathTmpEncCert := range pathTmpEncCerts {
-			_ = os.Remove(pathTmpEncCert)
-		}
-		return nil
-	}
-
-	// Cleanup and return error if temporary files could not be prepared
-	if errSaveTmpSigCert != nil {
-		_ = fnCleanup()
-		return nil, fnNil, fmt.Errorf("could not prepare signature certificate: %s", errSaveTmpSigCert)
-	}
-	if errSaveTmpSigKey != nil {
-		_ = fnCleanup()
-		return nil, fnNil, fmt.Errorf("could not prepare signature key: %s", errSaveTmpSigKey)
-	}
-	if errSaveTmpEncCert != nil {
-		_ = fnCleanup()
-		return nil, fnNil, fmt.Errorf("could not prepare encryption key: %s", errSaveTmpEncCert)
 	}
 
 	// Return initialized write syncer
@@ -225,11 +178,11 @@ func NewSmtpSyncer(
 
 		attachAsFile: attachAsFile,
 
-		pathOpenssl:         pathOpenssl,
-		pathSignatureCert:   pathTmpSigCert,
-		pathSignatureKey:    pathTmpSigKey,
-		pathEncryptionCerts: pathTmpEncCerts,
-	}, fnCleanup, nil
+		pathOpenssl:     pathOpenssl,
+		signatureCert:   signatureCert,
+		signatureKey:    signatureKey,
+		encryptionCerts: encryptionCerts,
+	}, nil
 }
 
 func (s *SmtpSyncer) Write(p []byte) (int, error) {
@@ -239,30 +192,50 @@ func (s *SmtpSyncer) Write(p []byte) (int, error) {
 		return 0, nil
 	}
 
-	// Prepare file attachment for mail
-	pAttachment := make(map[string][]byte)
-	if s.attachAsFile {
-		pAttachment[strings.ReplaceAll(strings.ToLower(s.mailSubject), " ", "_")+".txt"] = p
+	// Write signing certificate to disk, where it can be used by OpenSSL
+	pathAttachment, errPathAttachment := smtp.SaveToTemp(p, strings.ReplaceAll(strings.ToLower(s.mailSubject), " ", "_")+"_*.txt")
+	if errPathAttachment != nil {
+		return 0, errPathAttachment
 	}
 
-	// Send log messages by mail
-	err := smtp.SendMail(
-		s.smtpServer,
-		s.smtpPort,
-		s.smtpUser,
-		s.smtpPassword,
+	// Cleanup temporary file on return
+	defer func() { _ = os.Remove(pathAttachment) }()
+
+	// Initialize mailer
+	mlr := smtp.NewMailer(s.smtpServer, s.smtpPort)
+
+	// Cleanup
+	defer mlr.Close()
+
+	// Set mailer auth
+	mlr.SetAuth(s.smtpUser, s.smtpPassword)
+
+	// Configure OpenSSL
+	errOpenssl := mlr.SetOpenssl(s.pathOpenssl)
+	if errOpenssl != nil {
+		return 0, errOpenssl
+	}
+
+	// Prepare signature
+	if s.signatureCert != nil || s.signatureKey != nil {
+		errSignature := mlr.SetSignature(s.signatureCert, s.signatureKey)
+		if errSignature != nil {
+			return 0, errSignature
+		}
+	}
+
+	// Run test
+	errSend := mlr.Send(
 		s.mailFrom,
 		s.mailRecipients,
+		s.encryptionCerts, // One encryption certificate per recipient
 		s.mailSubject,
 		p,
-		pAttachment,
-		s.pathOpenssl,
-		s.pathSignatureCert,
-		s.pathSignatureKey,
-		s.pathEncryptionCerts,
+		[]string{pathAttachment}, // List of file paths to attach
+		false,
 	)
-	if err != nil {
-		return 0, err
+	if errSend != nil {
+		return 0, errSend
 	}
 
 	// Return length of payload

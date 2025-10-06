@@ -49,7 +49,7 @@ func Test_example(t *testing.T) {
 	 */
 
 	// Prepare SMTP writeSyncer
-	smtpWriteSyncer, fnCleanup, errSmtpWriteSyncer := ZapSmtp.NewSmtpSyncer(
+	smtpWriteSyncer, errSmtpWriteSyncer := ZapSmtp.NewSmtpSyncer(
 		_test.SmtpServer,
 		_test.SmtpPort,
 		_test.SmtpUser,
@@ -70,14 +70,6 @@ func Test_example(t *testing.T) {
 		t.Errorf("could not initilialize SMTP writeSyncer: %s", errSmtpWriteSyncer)
 		return
 	}
-
-	// Cleanup SMTP writeSyncer (if you are using it with signature or encryption).
-	// OpenSSL can only receive one argument via Stdin, which is the message. Other arguments, such as
-	// signature or encryption keys must be passed as file paths in a PEM format. The SMTP writeSyncer
-	// prepares the necessary files as temporary files in the required format and uses them throughout
-	// its lifetime. You are responsible for cleaning them up on exit, Zap logger cannot not take care
-	// of that automatically!
-	defer func() { _ = fnCleanup() }()
 
 	// Prepare SMTP core
 	smtpCore, errSmtpCore := ZapSmtp.NewDelayedCore(

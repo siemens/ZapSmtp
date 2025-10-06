@@ -75,7 +75,7 @@ func TestNewSmtpWriteSyncer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			_, fnCleanup, err := NewSmtpSyncer(
+			_, err := NewSmtpSyncer(
 				_test.SmtpServer,
 				_test.SmtpPort,
 				_test.SmtpUser,
@@ -92,7 +92,6 @@ func TestNewSmtpWriteSyncer(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewSmtpSyncer() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			fnCleanup()
 		})
 	}
 }

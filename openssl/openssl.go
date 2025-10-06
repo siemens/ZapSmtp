@@ -21,7 +21,7 @@ import (
 )
 
 // CertToPem returns the certificate in DER format to PEM format, it fails if the input is in any other encoding.
-func CertToPem(openSslPath string, cert []byte) ([]byte, error) {
+func CertToPem(pathOpenssl string, cert []byte) ([]byte, error) {
 
 	// Check if certificate was provided
 	if len(cert) == 0 {
@@ -56,7 +56,7 @@ func CertToPem(openSslPath string, cert []byte) ([]byte, error) {
 	}
 
 	// Try to transform the certificate from DER to PEM format
-	cmd := exec.Command(openSslPath, "x509",
+	cmd := exec.Command(pathOpenssl, "x509",
 		"-inform", "der",
 		"-in", tmpFile.Name(),
 		"-outform", "pem",
@@ -78,7 +78,7 @@ func CertToPem(openSslPath string, cert []byte) ([]byte, error) {
 }
 
 // KeyToPem returns the key in DER format to PEM format, it fails if the input is in any other encoding.
-func KeyToPem(openSslPath string, key []byte) ([]byte, error) {
+func KeyToPem(pathOpenssl string, key []byte) ([]byte, error) {
 
 	// Check if key was provided
 	if len(key) == 0 {
@@ -110,7 +110,7 @@ func KeyToPem(openSslPath string, key []byte) ([]byte, error) {
 	}
 
 	// Try to transform the key from DER to PEM format
-	cmd := exec.Command(openSslPath, "pkey",
+	cmd := exec.Command(pathOpenssl, "pkey",
 		"-inform", "der",
 		"-in", tmpFile.Name(),
 		"-outform", "pem",
@@ -134,7 +134,7 @@ func KeyToPem(openSslPath string, key []byte) ([]byte, error) {
 // PrepareSignatureKeys converts the sender's key pair to PEM if necessary and verifies that they are a
 // matching key pair.
 func PrepareSignatureKeys(
-	openSslPath string,
+	pathOpenssl string,
 	signatureCert []byte,
 	signatureKey []byte,
 ) ([]byte, []byte, error) {
@@ -142,13 +142,13 @@ func PrepareSignatureKeys(
 	// Check whether the certificate and key are already in PEM format, and try to convert them if not
 	var err error
 	if block, _ := pem.Decode(signatureCert); block == nil {
-		signatureCert, err = CertToPem(openSslPath, signatureCert)
+		signatureCert, err = CertToPem(pathOpenssl, signatureCert)
 		if err != nil {
 			return nil, nil, fmt.Errorf("sender certificate: %s", err)
 		}
 	}
 	if block, _ := pem.Decode(signatureKey); block == nil {
-		signatureKey, err = KeyToPem(openSslPath, signatureKey)
+		signatureKey, err = KeyToPem(pathOpenssl, signatureKey)
 		if err != nil {
 			return nil, nil, fmt.Errorf("sender key: %s", err)
 		}
@@ -156,7 +156,7 @@ func PrepareSignatureKeys(
 
 	// Check whether the private key and the public key match. Otherwise, any validation of the signature would fail.
 	// First create a matching public key for the private key
-	cmd := exec.Command(openSslPath, "pkey", "-pubout", "-outform", "pem")
+	cmd := exec.Command(pathOpenssl, "pkey", "-pubout", "-outform", "pem")
 	cmd.Stdin = bytes.NewReader(signatureKey)
 
 	// Create the needed buffers
@@ -171,7 +171,7 @@ func PrepareSignatureKeys(
 	}
 
 	// Secondly read the public key from the certificate
-	cmd = exec.Command(openSslPath, "x509", "-pubkey", "-noout", "-outform", "pem")
+	cmd = exec.Command(pathOpenssl, "x509", "-pubkey", "-noout", "-outform", "pem")
 	cmd.Stdin = bytes.NewReader(signatureCert)
 
 	// Create the needed buffers
@@ -198,7 +198,7 @@ func PrepareSignatureKeys(
 // their certificates does not have to match and no check is performed, that the certificates actually belong to
 // later recipients.
 func PrepareEncryptionKeys(
-	openSslPath string,
+	pathOpenssl string,
 	encryptionKeys [][]byte,
 ) ([][]byte, error) {
 
@@ -211,7 +211,7 @@ func PrepareEncryptionKeys(
 
 		// Check whether the certificate and key are already in PEM format, and try to convert them if not
 		if block, _ := pem.Decode(encryptionKey); block == nil {
-			encryptionKey, err = CertToPem(openSslPath, encryptionKey)
+			encryptionKey, err = CertToPem(pathOpenssl, encryptionKey)
 			if err != nil {
 				return nil, fmt.Errorf("recipient certificate: %s", err)
 			}
@@ -225,14 +225,14 @@ func PrepareEncryptionKeys(
 
 // SignMessage calls OpenSsl to sign the given message
 func SignMessage(
-	openSslPath string,
-	signatureCertPath string, // Path to certificate
-	signatureKeyPath string, // Path to key
+	pathOpenssl string,
+	pathSignatureCert string, // Path to certificate
+	pathSignatureKey string, // Path to key
 	message []byte,
 ) ([]byte, error) {
 
 	// Sanity checks
-	if len(openSslPath) == 0 {
+	if len(pathOpenssl) == 0 {
 		return nil, fmt.Errorf("invalid OpenSSL path")
 	}
 	if len(message) == 0 {
@@ -240,9 +240,9 @@ func SignMessage(
 	}
 
 	// Create the command for signing the message
-	cmd := exec.Command(openSslPath, "smime", "-sign",
-		"-signer", signatureCertPath,
-		"-inkey", signatureKeyPath,
+	cmd := exec.Command(pathOpenssl, "smime", "-sign",
+		"-signer", pathSignatureCert,
+		"-inkey", pathSignatureKey,
 	)
 	cmd.Stdin = bytes.NewBuffer(message)
 
@@ -263,16 +263,16 @@ func SignMessage(
 
 // EncryptMessage calls OpenSsl to SMIME encrypt the given message
 func EncryptMessage(
-	openSslPath string,
+	pathOpenssl string,
 	mailFrom string,
 	mailTo []string,
 	mailSubject string,
 	mailMessage []byte,
-	encryptionCertPaths []string, // Paths to the encryption certificates of the recipients
+	pathEncryptionCerts []string, // Paths to the encryption certificates of the recipients
 ) ([]byte, error) {
 
 	// Sanity checks
-	if len(openSslPath) == 0 {
+	if len(pathOpenssl) == 0 {
 		return nil, fmt.Errorf("invalid OpenSSL path")
 	}
 	if len(mailMessage) == 0 {
@@ -281,10 +281,10 @@ func EncryptMessage(
 	if len(mailTo) < 1 {
 		return nil, fmt.Errorf("no recipients defined")
 	}
-	if len(mailTo) != len(encryptionCertPaths) {
+	if len(mailTo) != len(pathEncryptionCerts) {
 		return nil, fmt.Errorf(
 			"number of recipients (%d) and number of certificates has to match (%d)",
-			len(mailTo), len(encryptionCertPaths),
+			len(mailTo), len(pathEncryptionCerts),
 		)
 	}
 
@@ -300,8 +300,8 @@ func EncryptMessage(
 		mailSubject,
 		"-aes256",
 	}
-	args = append(args, encryptionCertPaths...)
-	cmd := exec.Command(openSslPath, args...)
+	args = append(args, pathEncryptionCerts...)
+	cmd := exec.Command(pathOpenssl, args...)
 	cmd.Stdin = bytes.NewReader(mailMessage)
 
 	// Create the needed buffers
