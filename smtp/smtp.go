@@ -11,11 +11,11 @@
 package smtp
 
 import (
-	"errors"
 	"fmt"
 	"net/mail"
 	"net/smtp"
 	"os"
+	"os/exec"
 
 	"github.com/siemens/ZapSmtp/openssl"
 )
@@ -41,9 +41,9 @@ func (mailer *Mailer) SetAuth(username string, password string) {
 
 func (mailer *Mailer) SetOpenssl(path string) error {
 
-	// Verify path
+	// Verify OpenSSL executable path
 	if path != "" {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if _, err := exec.LookPath(path); err != nil {
 			return ErrInvalidOpensslPath
 		}
 	}
@@ -268,18 +268,18 @@ func SaveToTemp(data []byte, namePattern string) (string, error) {
 func SendMail(
 	smtpServer string,
 	smtpPort uint16,
-	smtpUsername string,
-	smtpPassword string,
+	smtpUsername string, // Optional credentials, can be left empty to skip authentication
+	smtpPassword string, // Optional credentials, can be left empty to skip authentication
 	mailFrom mail.Address,
 	mailTo []mail.Address,
-	mailToCerts [][]byte,
+	mailToCerts [][]byte, // Optional encryption certificates, can be nil
 	mailSubject string,
 	mailBody []byte,
-	pathMailAttachments []string,
-	pathOpenssl string,
-	signatureCert []byte,
-	signatureKey []byte,
-	html bool,
+	pathMailAttachments []string, // Optional file attachments, can be nil
+	pathOpenssl string, // Optional path to OpenSSL, only required for signatures and encryption
+	signatureCert []byte, // Optional signature key, can be nil
+	signatureKey []byte, // Optional signature key, can be nil
+	html bool, // Whether to send the mail message as HTML content type or plaintext
 ) error {
 
 	// Prepare Mailer

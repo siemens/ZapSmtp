@@ -11,6 +11,7 @@ import (
 	"net/mail"
 	"net/textproto"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -255,15 +256,15 @@ func buildMimeMessage(
  *
  */
 
-func (message *Message) SetOpensslPath(opensslPath string) error {
+func (message *Message) SetOpenssl(path string) error {
 
-	// Check if OpenSSL path is valid
-	if _, err := os.Stat(message.pathOpenssl); errors.Is(err, os.ErrNotExist) {
+	// Verify OpenSSL executable path
+	if _, err := exec.LookPath(path); err != nil {
 		return ErrInvalidOpensslPath
 	}
 
 	// Set OpenSSL paths
-	message.pathOpenssl = opensslPath
+	message.pathOpenssl = path
 
 	// Return nil as everything went fine
 	return nil
@@ -271,8 +272,8 @@ func (message *Message) SetOpensslPath(opensslPath string) error {
 
 func (message *Message) SetSignature(pathSigCert string, pathSigKey string) error {
 
-	// Check if OpenSSL path is already set
-	if _, err := os.Stat(message.pathOpenssl); errors.Is(err, os.ErrNotExist) {
+	// Verify OpenSSL executable path
+	if _, err := exec.LookPath(message.pathOpenssl); err != nil {
 		return ErrInvalidOpensslPath
 	}
 
