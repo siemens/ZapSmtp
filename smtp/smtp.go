@@ -57,7 +57,7 @@ func (mailer *Mailer) SetOpenssl(path string) error {
 
 func (mailer *Mailer) SetSignature(signatureCert []byte, signatureKey []byte) error {
 
-	// Check if openssl is set
+	// Check if OpenSSL is set
 	if mailer.pathOpenssl == "" {
 		return ErrInvalidOpensslPath
 	}
@@ -109,7 +109,7 @@ func (mailer *Mailer) Send(
 	pathEncryptionCerts := make([]string, 0, len(toCerts))
 	if len(toCerts) > 0 {
 
-		// Check if openssl is set
+		// Check if OpenSSL is set
 		if mailer.pathOpenssl == "" {
 			return ErrInvalidOpensslPath
 		}

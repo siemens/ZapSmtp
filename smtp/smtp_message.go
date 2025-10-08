@@ -70,10 +70,12 @@ func (message *Message) Attach(paths ...string) error {
 // Sign enables signing of the MIME message. Signing is executed later during building of the message.
 func (message *Message) Sign() error {
 
-	// Check if prerequisites are met
+	// Check if OpenSSL is set
 	if message.pathOpenssl == "" {
 		return ErrInvalidOpensslPath
 	}
+
+	// Check if signature certificate is set
 	if message.pathSignatureCert == "" || message.pathSignatureKey == "" {
 		return ErrInvalidSigCert
 	}
@@ -88,17 +90,17 @@ func (message *Message) Sign() error {
 // Encrypt enables encryption of the MIME message. Encryption is executed later during building of the message.
 func (message *Message) Encrypt(encCertsPaths []string) error {
 
-	// Check if prerequisites are met
+	// Check if OpenSSL is set
 	if message.pathOpenssl == "" {
 		return ErrInvalidOpensslPath
 	}
 
-	// Check encryption certificates
+	// Check encryption certificates are defined
 	if len(message.To) != len(encCertsPaths) {
 		return ErrInvalidEncCerts
 	}
 
-	// Check paths
+	// Check paths of encryption certificates
 	for _, pathEncryptionCert := range message.pathEncryptionCerts {
 		if _, err := os.Stat(pathEncryptionCert); errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("invalid encryption certificate '%s'", pathEncryptionCert)
@@ -272,8 +274,8 @@ func (message *Message) SetOpenssl(path string) error {
 
 func (message *Message) SetSignature(pathSigCert string, pathSigKey string) error {
 
-	// Verify OpenSSL executable path
-	if _, err := exec.LookPath(message.pathOpenssl); err != nil {
+	// Check if OpenSSL is set
+	if message.pathOpenssl == "" {
 		return ErrInvalidOpensslPath
 	}
 
