@@ -201,38 +201,22 @@ func (s *SmtpSyncer) Write(p []byte) (int, error) {
 	// Cleanup temporary file on return
 	defer func() { _ = os.Remove(pathAttachment) }()
 
-	// Initialize mailer
-	mlr := smtp.NewMailer(s.smtpServer, s.smtpPort)
-
-	// Cleanup
-	defer mlr.Close()
-
-	// Set mailer auth
-	mlr.SetAuth(s.smtpUser, s.smtpPassword)
-
-	// Configure OpenSSL
-	errOpenssl := mlr.SetOpenssl(s.pathOpenssl)
-	if errOpenssl != nil {
-		return 0, errOpenssl
-	}
-
-	// Prepare signature
-	if s.signatureCert != nil || s.signatureKey != nil {
-		errSignature := mlr.SetSignature(s.signatureCert, s.signatureKey)
-		if errSignature != nil {
-			return 0, errSignature
-		}
-	}
-
-	// Run test
-	errSend := mlr.Send(
+	// Send mail with log data
+	errSend := smtp.SendMail(
+		s.smtpServer,
+		s.smtpPort,
+		s.smtpUser,
+		s.smtpPassword,
 		s.mailFrom,
 		s.mailRecipients,
 		s.encryptionCerts, // One encryption certificate per recipient
 		s.mailSubject,
 		p,
 		[]string{pathAttachment}, // List of file paths to attach
-		false,
+		s.pathOpenssl,
+		s.signatureCert,
+		s.signatureKey,
+		false, // Send as plaintext
 	)
 	if errSend != nil {
 		return 0, errSend

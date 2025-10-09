@@ -19,7 +19,7 @@ import (
 	"github.com/siemens/ZapSmtp/_test"
 )
 
-func Test_Send(t *testing.T) {
+func TestSendMail(t *testing.T) {
 
 	// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
 	// only be reviewed manually
@@ -48,12 +48,12 @@ func Test_Send(t *testing.T) {
 	// Read signature certificate bytes
 	sigCert, errSigCert := os.ReadFile(_test.Cert1Path)
 	if errSigCert != nil {
-		t.Errorf("Could not read certificate: %v", errSigCert)
+		t.Errorf("TestSendMail() error: Could not read certificate: %v", errSigCert)
 		return
 	}
 	sigKey, errSigKey := os.ReadFile(_test.Key1Path)
 	if errSigKey != nil {
-		t.Errorf("Could not read certificate: %v", errSigKey)
+		t.Errorf("TestSendMail() error: Could not read certificate: %v", errSigKey)
 		return
 	}
 
@@ -65,7 +65,7 @@ func Test_Send(t *testing.T) {
 		// Read encryption certificate bytes
 		data, errReadCert := os.ReadFile(_test.RealCertPath)
 		if errReadCert != nil {
-			t.Errorf("Could not read certificate: %v", errReadCert)
+			t.Errorf("TestSendMail() error: Could not read certificate: %v", errReadCert)
 			return
 		}
 		toCerts = append(toCerts, data)
@@ -225,50 +225,32 @@ func Test_Send(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			// Initialize mailer
-			mlr := NewMailer(tt.args.smtpServer, tt.args.smtpPort)
-
-			// Cleanup
-			defer mlr.Close()
-
-			// Set mailer auth
-			mlr.SetAuth(tt.args.smtpUser, tt.args.smtpPassword)
-
-			// Configure OpenSSL
-			errOpenssl := mlr.SetOpenssl(tt.args.pathOpenssl)
-			if errOpenssl != nil {
-				t.Errorf("Send() OpenSSL error: %v", errOpenssl)
-				return
-			}
-
-			// Prepare signature
-			if tt.args.signatureCert != nil || tt.args.signatureKey != nil {
-				errSignature := mlr.SetSignature(tt.args.signatureCert, tt.args.signatureKey)
-				if errSignature != nil {
-					t.Errorf("Send() Signature error: %v", errSignature)
-					return
-				}
-			}
-
 			// Run test
-			err := mlr.Send(
+			err := SendMail(
+				tt.args.smtpServer,
+				tt.args.smtpPort,
+				tt.args.smtpUser,
+				tt.args.smtpPassword,
 				tt.args.mailFrom,
 				tt.args.mailRecipients,
 				tt.args.encryptionCerts, // One encryption certificate per recipient
 				tt.args.mailSubject,
 				tt.args.message,
 				nil, // List of file paths to attach
-				false,
+				tt.args.pathOpenssl,
+				tt.args.signatureCert,
+				tt.args.signatureKey,
+				false, // Send as plaintext
 			)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Send() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("TestSendMail() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})
 	}
 }
 
-func Test_send_attachment(t *testing.T) {
+func TestSendMail_attachment(t *testing.T) {
 
 	// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
 	// only be reviewed manually
@@ -297,12 +279,12 @@ func Test_send_attachment(t *testing.T) {
 	// Read signature certificate bytes
 	sigCert, errSigCert := os.ReadFile(_test.Cert1Path)
 	if errSigCert != nil {
-		t.Errorf("Could not read certificate: %v", errSigCert)
+		t.Errorf("TestSendMail_attachment() error: Could not read certificate: %v", errSigCert)
 		return
 	}
 	sigKey, errSigKey := os.ReadFile(_test.Key1Path)
 	if errSigKey != nil {
-		t.Errorf("Could not read certificate: %v", errSigKey)
+		t.Errorf("TestSendMail_attachment() error: Could not read certificate: %v", errSigKey)
 		return
 	}
 
@@ -314,7 +296,7 @@ func Test_send_attachment(t *testing.T) {
 		// Read encryption certificate bytes
 		data, errReadCert := os.ReadFile(_test.RealCertPath)
 		if errReadCert != nil {
-			t.Errorf("Could not read certificate: %v", errReadCert)
+			t.Errorf("TestSendMail_attachment() error: Could not read certificate: %v", errReadCert)
 			return
 		}
 		toCerts = append(toCerts, data)
@@ -431,49 +413,31 @@ func Test_send_attachment(t *testing.T) {
 				fileName := filepath.Base(attachmentPath)
 				fileBytes, errFileBytes := os.ReadFile(attachmentPath)
 				if errFileBytes != nil {
-					t.Errorf("Test_send_attachment() could not read file: %v", errFileBytes)
+					t.Errorf("TestSendMail_attachment() could not read file: %v", errFileBytes)
 					return
 				}
 				attachments[fileName] = fileBytes
 			}
 
-			// Initialize mailer
-			mlr := NewMailer(tt.args.smtpServer, tt.args.smtpPort)
-
-			// Cleanup
-			defer mlr.Close()
-
-			// Set mailer auth
-			mlr.SetAuth(tt.args.smtpUser, tt.args.smtpPassword)
-
-			// Configure OpenSSL
-			errOpenssl := mlr.SetOpenssl(tt.args.pathOpenssl)
-			if errOpenssl != nil {
-				t.Errorf("Send() OpenSSL error: %v", errOpenssl)
-				return
-			}
-
-			// Prepare signature
-			if tt.args.signatureCert != nil || tt.args.signatureKey != nil {
-				errSignature := mlr.SetSignature(tt.args.signatureCert, tt.args.signatureKey)
-				if errSignature != nil {
-					t.Errorf("Send() Signature error: %v", errSignature)
-					return
-				}
-			}
-
 			// Run test
-			err := mlr.Send(
+			err := SendMail(
+				tt.args.smtpServer,
+				tt.args.smtpPort,
+				tt.args.smtpUser,
+				tt.args.smtpPassword,
 				tt.args.mailFrom,
 				tt.args.mailRecipients,
 				tt.args.encryptionCerts, // One encryption certificate per recipient
-				tt.args.mailSubject,
+				tt.args.mailSubject+"(with attachment)",
 				tt.args.message,
 				tt.args.attachmentPaths, // List of file paths to attach
-				false,
+				tt.args.pathOpenssl,
+				tt.args.signatureCert,
+				tt.args.signatureKey,
+				false, // Send as plaintext
 			)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Send() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("TestSendMail_attachment() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})
