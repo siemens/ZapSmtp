@@ -98,9 +98,9 @@ func (message *Message) Message() ([]byte, error) {
 	// Write headers
 	buf.WriteString(fmt.Sprintf("From: %s\r\n", message.From.String()))
 	buf.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(toStrs, ", ")))
-	buf.WriteString(fmt.Sprintf("Subject: %s\r\n", strings.NewReplacer("\r", " ", "\n", " ").Replace(message.Subject)))
+	buf.WriteString(fmt.Sprintf("Subject: %s\r\n", mime.QEncoding.Encode("utf-8", strings.NewReplacer("\r", " ", "\n", " ").Replace(message.Subject))))
 	buf.WriteString(fmt.Sprintf("Date: %s\r\n", time.Now().Format(time.RFC1123Z)))
-	buf.WriteString("MIME-Version: 1.0\r\n")
+	buf.WriteString(fmt.Sprintf("MIME-Version: 1.0\r\n"))
 	buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%s\r\n", boundary))
 	buf.WriteString("\r\n")
 
@@ -142,16 +142,19 @@ func (message *Message) Message() ([]byte, error) {
 		partHeaderAttachment.Set("Content-Transfer-Encoding", "base64")
 		partWriter, errPartWriter := writer.CreatePart(partHeaderAttachment)
 		if errPartWriter != nil {
-			return nil, fmt.Errorf("could not create attachment part for '%s': %w", filename, err)
+			return nil, fmt.Errorf("could not create attachment part for '%s': %w", filename, errPartWriter)
 		}
 		b64Writer := base64.NewEncoder(base64.StdEncoding, partWriter)
 		if _, errWrite := b64Writer.Write(content); errWrite != nil {
-			return nil, fmt.Errorf("could not write attachment part for '%s': %w", filename, err)
+			return nil, fmt.Errorf("could not write attachment part for '%s': %w", filename, errWrite)
 		}
 		_ = b64Writer.Close()
 	}
 
+	// Ensure boundary is properly closed
 	_ = writer.Close()
+
+	// Return message bytes
 	return buf.Bytes(), nil
 }
 
