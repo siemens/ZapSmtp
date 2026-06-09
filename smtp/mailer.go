@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"mime"
 	"net/smtp"
 	"os"
 	"os/exec"
@@ -168,6 +169,9 @@ func (mailer *Mailer) Send(msg *Message) error {
 			return fmt.Errorf("could not sign message: %s", errSign)
 		}
 
+		// Sanitize message subject to make it safe from header injection attempts
+		msgSubject := strings.NewReplacer("\r", " ", "\n", " ").Replace(msg.Subject)
+
 		// Address OpenSSL bug
 		// OpenSSL tries to be helpful by converting \n to CRLF (\r\n), because email standards (RFC 5322, MIME) expect it.
 		// If input already uses Windows line endings (\r\n), OpenSSL might insert extra \r, resulting in \r\r\n or worse.
@@ -178,7 +182,7 @@ func (mailer *Mailer) Send(msg *Message) error {
 		var msgSignedPrefixed bytes.Buffer
 		msgSignedPrefixed.WriteString(fmt.Sprintf("From: %s\r\n", msg.From.String()))
 		msgSignedPrefixed.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(recipientStr, ", ")))
-		msgSignedPrefixed.WriteString(fmt.Sprintf("Subject: %s\r\n", msg.Subject))
+		msgSignedPrefixed.WriteString(fmt.Sprintf("Subject: %s\r\n", mime.QEncoding.Encode("utf-8", msgSubject)))
 		msgSignedPrefixed.Write(msgSigned)
 
 		// Assign signed message
