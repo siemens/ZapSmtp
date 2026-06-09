@@ -112,9 +112,17 @@ func (c *DelayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 	// Request mutex to avoid sending partial messages
 	c.mutex.Lock()
 
-	// Start timer on first message
+	// Whether all queues are empty
+	allEmpty := len(c.messages) == 0 && len(c.messagesPriority) == 0
+
+	// Start timer on first message or after a failed sync routine
 	startRoutine := false
-	if len(c.messages) == 0 && len(c.messagesPriority) == 0 {
+	if allEmpty || len(c.errCh) > 0 {
+
+		// Empty error channel to not start multiple goroutines
+		for len(c.errCh) > 0 {
+			<-c.errCh
+		}
 
 		// Start timer with the default (non priority) duration
 		c.timerStartedAt = time.Now()
@@ -194,7 +202,6 @@ func (c *DelayedCore) Sync() error {
 		msg = append(msg, []byte("=== Priority Log ===\n")...)
 		for _, buf := range c.messagesPriority {
 			msg = append(msg, buf.Bytes()...)
-			buf.Free()
 		}
 
 		msg = append(msg, []byte("\n")...)
@@ -206,7 +213,6 @@ func (c *DelayedCore) Sync() error {
 		msg = append(msg, []byte("=== Standard Log ===\n")...)
 		for _, buf := range c.messages {
 			msg = append(msg, buf.Bytes()...)
-			buf.Free()
 		}
 	}
 
@@ -222,6 +228,14 @@ func (c *DelayedCore) Sync() error {
 	if errSync != nil {
 		c.mutex.Unlock()
 		return errSync
+	}
+
+	// Free buffers only after a successful write
+	for _, buf := range c.messagesPriority {
+		buf.Free()
+	}
+	for _, buf := range c.messages {
+		buf.Free()
 	}
 
 	// Clear the slice after a successful write but keep the allocated memory
