@@ -160,6 +160,9 @@ func (mailer *Mailer) Send(msg *Message) error {
 		recipientAddr[i] = recipient.Address
 	}
 
+	// Sanitize message subject to make it safe from header injection attempts
+	msgSubject := strings.NewReplacer("\r", " ", "\n", " ").Replace(msg.Subject)
+
 	// SetSignature MIME message if prerequisites are fulfilled
 	if msg.Sign && mailer.pathSignatureCert != "" && mailer.pathSignatureKey != "" {
 
@@ -168,9 +171,6 @@ func (mailer *Mailer) Send(msg *Message) error {
 		if errSign != nil {
 			return fmt.Errorf("could not sign message: %s", errSign)
 		}
-
-		// Sanitize message subject to make it safe from header injection attempts
-		msgSubject := strings.NewReplacer("\r", " ", "\n", " ").Replace(msg.Subject)
 
 		// Address OpenSSL bug
 		// OpenSSL tries to be helpful by converting \n to CRLF (\r\n), because email standards (RFC 5322, MIME) expect it.
@@ -192,7 +192,7 @@ func (mailer *Mailer) Send(msg *Message) error {
 	// Encrypt MIME message
 	if len(pathEncryptionCerts) > 0 {
 		var errEnc error
-		message, errEnc = openssl.EncryptMessage(mailer.pathOpenssl, msg.From.Address, recipientAddr, msg.Subject, message, pathEncryptionCerts)
+		message, errEnc = openssl.EncryptMessage(mailer.pathOpenssl, msg.From.Address, recipientAddr, msgSubject, message, pathEncryptionCerts)
 		if errEnc != nil {
 			return fmt.Errorf("could not encrypt message: %s", errEnc)
 		}

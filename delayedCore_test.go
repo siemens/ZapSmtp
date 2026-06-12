@@ -117,7 +117,7 @@ func TestDelayedCore(t *testing.T) {
 		t.Errorf("could not initialize delayed core: %s", errDelayedCore)
 		return
 	}
-	delayedCore.With([]Field{makeInt64Field("k", 1)})
+	delayedCoreWith := delayedCore.With([]Field{makeInt64Field("k", 1)})
 
 	// Call Sync on core
 	errSync := delayedCore.Sync()
@@ -125,14 +125,14 @@ func TestDelayedCore(t *testing.T) {
 		t.Errorf("Expected Syncing a temp file to succeed.: %s", errSync)
 	}
 
-	// Write test messages
-	if ce := delayedCore.Check(Entry{Level: DebugLevel, Message: "debug"}, nil); ce != nil {
+	// Write test messages via the cloned core (which has the "k":1 field baked in)
+	if ce := delayedCoreWith.Check(Entry{Level: DebugLevel, Message: "debug"}, nil); ce != nil {
 		ce.Write(makeInt64Field("k", 2))
 	}
-	if ce := delayedCore.Check(Entry{Level: InfoLevel, Message: "info"}, nil); ce != nil {
+	if ce := delayedCoreWith.Check(Entry{Level: InfoLevel, Message: "info"}, nil); ce != nil {
 		ce.Write(makeInt64Field("k", 3))
 	}
-	if ce := delayedCore.Check(Entry{Level: WarnLevel, Message: "warn"}, nil); ce != nil {
+	if ce := delayedCoreWith.Check(Entry{Level: WarnLevel, Message: "warn"}, nil); ce != nil {
 		ce.Write(makeInt64Field("k", 4))
 	}
 
@@ -151,7 +151,7 @@ func TestDelayedCore(t *testing.T) {
 		t.Errorf("could not read from temp file: %s", errRead)
 		return
 	}
-	if bytes.Equal(logged, want) {
+	if !bytes.Equal(logged, want) {
 		t.Errorf("unexpected log output: %s\n, want:\n%s\n", logged, want)
 		return
 	}
@@ -330,15 +330,15 @@ func TestDelayedCoreWriteFailure(t *testing.T) {
 	}
 
 	// Write a message — with delay 0 the background goroutine will attempt to flush immediately.
-	// The first write fails (OneTimeFailWriter), but the goroutine retries after 1s and succeeds.
+	// The first write fails (OneTimeFailWriter), but the goroutine retries after delayPriority (0) and succeeds.
 	errWrite := delayedCore.Write(Entry{}, nil)
 	if errWrite != nil {
 		t.Errorf("Unexpected Write error: %s", errWrite)
 		return
 	}
 
-	// Wait for the retry to succeed (1s backoff + margin)
-	time.Sleep(time.Millisecond * 1500)
+	// Wait for the retry to succeed (delayPriority is 0, so retry is near-instant)
+	time.Sleep(time.Millisecond * 500)
 
 	// After retry, a Sync should succeed with no queued messages
 	errSync2 := delayedCore.Sync()
