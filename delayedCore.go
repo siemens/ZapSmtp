@@ -168,16 +168,22 @@ func (c *DelayedCore) run() {
 			// Handle immediate flush requests (from Sync or critical log levels)
 			if sig.chFlushResult != nil {
 
-				// Reset state, because we will flush right now
-				hasPriority = false
-				timerStartedAt = time.Time{}
-				if timer != nil {
-					timer.Stop()
-					chTimer = nil
-				}
+				// Flush
+				errFlush := flush()
 
-				// Flush and return result
-				sig.chFlushResult <- flush()
+				// Return flush result to the caller
+				sig.chFlushResult <- errFlush
+
+				// Reset the timer state on success.
+				// Keep it otherwise, so that retries are handled by the expiring timer.
+				if errFlush == nil {
+					hasPriority = false
+					timerStartedAt = time.Time{}
+					if timer != nil {
+						timer.Stop()
+						chTimer = nil
+					}
+				}
 
 				// Listen for next case
 				continue
@@ -186,18 +192,18 @@ func (c *DelayedCore) run() {
 			// Flush immediately if SMTP delivery might not be guaranteed anymore
 			if len(messages)+len(messagesPriority) >= 5000 {
 
-				// Flush and leave the timer running on failure — the timer case
-				// already retries with a 5s backoff
-				if flush() != nil {
-					continue
-				}
+				// Flush
+				errFlush := flush()
 
-				// Reset state after successful flush
-				hasPriority = false
-				timerStartedAt = time.Time{}
-				if timer != nil {
-					timer.Stop()
-					chTimer = nil
+				// Reset the timer state on success.
+				// Keep it otherwise, so that retries are handled by the expiring timer.
+				if errFlush == nil {
+					hasPriority = false
+					timerStartedAt = time.Time{}
+					if timer != nil {
+						timer.Stop()
+						chTimer = nil
+					}
 				}
 
 				// Listen for next case
@@ -261,7 +267,7 @@ func (c *DelayedCore) run() {
 
 				// Reset timer
 				timerStartedAt = time.Now()
-				timer.Reset(time.Second * 5)
+				timer.Reset(c.delayPriority)
 
 				// Listen for next case
 				continue
