@@ -1,7 +1,7 @@
 /*
 * ZapSmtp, a Zap (Golang) logger extension for sending urgent log messages via SMTP
 *
-* Copyright (c) Siemens AG, 2021-2025.
+* Copyright (c) Siemens AG, 2021-2026.
 *
 * This work is licensed under the terms of the MIT license. For a copy, see the LICENSE file in the top-level
 * directory or visit <https://opensource.org/licenses/MIT>.
@@ -12,42 +12,44 @@ package ZapSmtp
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
-	"go.uber.org/multierr"
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
 )
 
+// signal is sent from Write to the background goroutine to deliver a log message or request a flush.
+type signal struct {
+	entryEncoded  *buffer.Buffer // Encoded log message to queue
+	entryPriority bool           // Whether the message satisfies the priority LevelEnabler
+	chFlushResult chan<- error   // If not nil, an immediate flush is requested and the result is sent back
+}
+
+// DelayedCore is a zapcore.Core that collects log messages and writes them in bulk after a configurable delay.
+// Messages satisfying a priority LevelEnabler shorten the delay so that critical logs are delivered sooner.
 type DelayedCore struct {
+
 	// Required to fulfill core interface
 	zapcore.LevelEnabler
-	enc zapcore.Encoder
-	out zapcore.WriteSyncer
+	encoder     zapcore.Encoder
+	writeSyncer zapcore.WriteSyncer
 
 	// Internal attributes of the delayed core
-	priority         zapcore.LevelEnabler
-	messages         []*buffer.Buffer // Log messages queued for writing
-	messagesPriority []*buffer.Buffer // Log messages queued for priority writing
-	delay            time.Duration
-	delayPriority    time.Duration
+	levelEnablerPriority zapcore.LevelEnabler
+	delay                time.Duration
+	delayPriority        time.Duration
 
-	mutex          sync.Mutex  // Mutex to control access to messages
-	timer          *time.Timer // Timer triggering the writeSyncer after exceeding
-	timerStartedAt time.Time   // Marker of when the timer started
-	errCh          chan error  // Channel for asynchronous Sync calls to notify about errors
+	chSignal chan signal // Channel to deliver log messages and flush requests to the background goroutine
 }
 
 // NewDelayedCore creates a zapcore.Core that writes logs after a given amount of time.
 // It will write the logs quicker if a received entry satisfies the priority LevelEnabler.
 // By calling Sync directly an immediate write of the messages can be forced.
 func NewDelayedCore(
-	enabler zapcore.LevelEnabler,
-	enc zapcore.Encoder,
-	out zapcore.WriteSyncer,
-
-	priority zapcore.LevelEnabler,
+	level zapcore.LevelEnabler,
+	encoder zapcore.Encoder,
+	writeSyncer zapcore.WriteSyncer,
+	levelPriority zapcore.LevelEnabler,
 	delay time.Duration,
 	delayPriority time.Duration,
 ) (*DelayedCore, error) {
@@ -57,32 +59,260 @@ func NewDelayedCore(
 		return nil, fmt.Errorf("priority delay lower than standard delay")
 	}
 
-	// Return delayed core
-	return &DelayedCore{
-		LevelEnabler:     enabler,
-		priority:         priority,
-		enc:              enc,
-		out:              out,
-		delay:            delay,
-		delayPriority:    delayPriority,
-		messages:         make([]*buffer.Buffer, 0, 5),
-		messagesPriority: make([]*buffer.Buffer, 0, 5),
-		errCh:            make(chan error, 2),
-	}, nil
-}
-
-// With is a reimplementation of ioCore.With because ioCore is not exported
-func (c *DelayedCore) With(fields []zapcore.Field) zapcore.Core {
-	clone := c.clone()
-	addFields(clone.enc, fields)
-	return clone
-}
-
-// addFields is a reimplementation of ioCore.addFields because ioCore is not exported
-func addFields(enc zapcore.ObjectEncoder, fields []zapcore.Field) {
-	for i := range fields {
-		fields[i].AddTo(enc)
+	// Initialize delayed core
+	core := &DelayedCore{
+		LevelEnabler:         level,
+		levelEnablerPriority: levelPriority,
+		encoder:              encoder,
+		writeSyncer:          writeSyncer,
+		delay:                delay,
+		delayPriority:        delayPriority,
+		chSignal:             make(chan signal, 64),
 	}
+
+	// Start background goroutine that owns all timer and sync logic
+	go core.run()
+
+	// Return nil as everything went fine
+	return core, nil
+}
+
+// run is the background goroutine that owns all timer, queue, and flush logic. It waits for signals from Write
+// and Sync, manages the flush timer, and retries failed flushes with a short backoff.
+func (c *DelayedCore) run() {
+
+	// Message queues are owned exclusively by this goroutine, no mutex needed
+	var messages []*buffer.Buffer
+	var messagesPriority []*buffer.Buffer
+
+	// Timer state is owned exclusively by this goroutine, no mutex needed
+	var timer *time.Timer
+	var timerStartedAt time.Time
+	var hasPriority = false
+
+	// Prepare channel for the timer signal.
+	// As long as this channel is nil, no timer is active and no sync is planned
+	var chTimer <-chan time.Time
+
+	// flush writes all queued messages to the output and clears the queues.
+	flush := func() error {
+
+		// Return if there are no buffered messages
+		if len(messagesPriority) == 0 && len(messages) == 0 {
+			return nil
+		}
+
+		// Combine the priority and standard messages prepended with a nice header
+		msg := make([]byte, 0, 1024*(len(messagesPriority)+len(messages)))
+
+		// Append priority messages
+		if len(messagesPriority) > 0 {
+			msg = append(msg, []byte("=== Priority Log ===\n")...)
+			for _, buf := range messagesPriority {
+				msg = append(msg, buf.Bytes()...)
+			}
+			msg = append(msg, []byte("\n")...)
+			msg = append(msg, []byte("\n")...)
+		}
+
+		// Append standard messages
+		if len(messages) > 0 {
+			msg = append(msg, []byte("=== Standard Log ===\n")...)
+			for _, buf := range messages {
+				msg = append(msg, buf.Bytes()...)
+			}
+		}
+
+		// Write message
+		_, errWrite := c.writeSyncer.Write(msg)
+		if errWrite != nil {
+			return errWrite
+		}
+
+		// Sync out to make sure messages are written (might be an empty function depending on writeSyncer)
+		errSync := c.writeSyncer.Sync()
+		if errSync != nil {
+			return errSync
+		}
+
+		// Free buffers only after a successful write
+		for _, buf := range messagesPriority {
+			buf.Free()
+		}
+		for _, buf := range messages {
+			buf.Free()
+		}
+
+		// Clear the slices after a successful write but keep the allocated memory
+		messagesPriority = messagesPriority[:0]
+		messages = messages[:0]
+
+		// Return nil as everything went fine
+		return nil
+	}
+
+	// Keep looping to observe messages and handle timed syncs
+	for {
+		select {
+		case sig := <-c.chSignal:
+
+			// Queue the message if one was delivered
+			if sig.entryEncoded != nil {
+				if sig.entryPriority {
+					messagesPriority = append(messagesPriority, sig.entryEncoded)
+				} else {
+					messages = append(messages, sig.entryEncoded)
+				}
+			}
+
+			// Handle immediate flush requests (from Sync or critical log levels)
+			if sig.chFlushResult != nil {
+
+				// Reset state, because we will flush right now
+				hasPriority = false
+				timerStartedAt = time.Time{}
+				if timer != nil {
+					timer.Stop()
+					chTimer = nil
+				}
+
+				// Flush and return result
+				sig.chFlushResult <- flush()
+
+				// Listen for next case
+				continue
+			}
+
+			// Flush immediately if SMTP delivery might not be guaranteed anymore
+			if len(messages)+len(messagesPriority) >= 5000 {
+
+				// Flush and leave the timer running on failure — the timer case
+				// already retries with a 5s backoff
+				if flush() != nil {
+					continue
+				}
+
+				// Reset state after successful flush
+				hasPriority = false
+				timerStartedAt = time.Time{}
+				if timer != nil {
+					timer.Stop()
+					chTimer = nil
+				}
+
+				// Listen for next case
+				continue
+			}
+
+			// Shorten a remaining delay if this is the first priority message while a timer is already running.
+			// A negative remaining duration is clamped to zero to trigger immediately.
+			if chTimer != nil && !hasPriority && sig.entryPriority {
+
+				// Set priority mode
+				hasPriority = true
+
+				// Shorten timer if it has more time remaining than delayPriority
+				remaining := timerStartedAt.Add(c.delay).Sub(time.Now())
+				if remaining > c.delayPriority {
+					timer.Reset(c.delayPriority)
+				}
+
+				// Listen for next case
+				continue
+			}
+
+			// Start a new timer if none is running
+			if chTimer == nil {
+
+				// Set timer start timestamp
+				timerStartedAt = time.Now()
+
+				// Set priority mode if necessary
+				hasPriority = sig.entryPriority
+
+				// Decide timer duration
+				duration := c.delay
+				if hasPriority {
+					duration = c.delayPriority
+				}
+
+				// Create or set timer.
+				// The timer is reused, it only needs to be set the first time
+				if timer == nil {
+					timer = time.NewTimer(duration)
+				} else {
+					timer.Reset(duration)
+				}
+
+				// Set the timer channel to trigger syncs
+				chTimer = timer.C
+
+				// Listen for next case
+				continue
+			}
+
+		case <-chTimer:
+
+			// Flush all queued messages
+			errFlush := flush()
+
+			// In case of error retry after some delay
+			if errFlush != nil {
+
+				// Reset timer
+				timerStartedAt = time.Now()
+				timer.Reset(time.Second * 5)
+
+				// Listen for next case
+				continue
+			}
+
+			// Reset state, because we just flushed successfully
+			hasPriority = false
+			timerStartedAt = time.Time{}
+			chTimer = nil
+		}
+	}
+}
+
+// Write serializes the entry and any fields and adds them to the log buffer.
+// Buffered logs are not yet written, they will be written in bulk when the timer fires or Sync() is called.
+//
+// If called, it should not replicate the logic of Check(), but always add the message.
+func (c *DelayedCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+
+	// Encode the message
+	entryEncoded, errEntryEncoded := c.encoder.EncodeEntry(entry, fields)
+	if errEntryEncoded != nil {
+		return errEntryEncoded
+	}
+
+	// Determine priority
+	priority := c.levelEnablerPriority.Enabled(entry.Level)
+
+	// For critical log levels (DPanic, Panic, Fatal), flush immediately and wait for the result,
+	// because the program may be about to crash. https://github.com/uber-go/zap/issues/500
+	if entry.Level > zapcore.ErrorLevel {
+		chFlushResult := make(chan error, 1)
+		c.chSignal <- signal{entryEncoded: entryEncoded, entryPriority: priority, chFlushResult: chFlushResult}
+		return <-chFlushResult
+	}
+
+	// Send the encoded message to the background goroutine for queuing
+	c.chSignal <- signal{entryEncoded: entryEncoded, entryPriority: priority}
+
+	// Return nil as everything went fine
+	return nil
+}
+
+// Sync flushes buffered logs (if any). Blocks until all queued messages have been written.
+func (c *DelayedCore) Sync() error {
+
+	// Signal the background goroutine to flush and wait for the result
+	chFlushResult := make(chan error, 1)
+	c.chSignal <- signal{chFlushResult: chFlushResult}
+
+	return <-chFlushResult
 }
 
 // Check determines whether the supplied Entry should be logged. If the entry
@@ -91,184 +321,31 @@ func addFields(enc zapcore.ObjectEncoder, fields []zapcore.Field) {
 //
 // Callers must use Check before calling Write.
 func (c *DelayedCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	if c.Enabled(ent.Level) || c.priority.Enabled(ent.Level) {
+	if c.Enabled(ent.Level) || c.levelEnablerPriority.Enabled(ent.Level) {
 		return ce.AddCore(ent, c)
 	}
 	return ce
 }
 
-// Write serializes the entry and any fields and adds them to the log buffer.
-// Buffered logs are not yet written, they will be written in bulks on Sync().
-//
-// If called, it should not replicate the logic of Check(), but always add the message.
-func (c *DelayedCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
+// With is a reimplementation of ioCore.With because ioCore is not exported
+func (c *DelayedCore) With(fields []zapcore.Field) zapcore.Core {
 
-	// Encode the message
-	buf, errEncode := c.enc.EncodeEntry(ent, fields)
-	if errEncode != nil {
-		return errEncode
+	// Clone the core and add the fields to the cloned encoder
+	clone := c.clone()
+	for i := range fields {
+		fields[i].AddTo(clone.encoder)
 	}
 
-	// Request mutex to avoid sending partial messages
-	c.mutex.Lock()
-
-	// Whether all queues are empty
-	allEmpty := len(c.messages) == 0 && len(c.messagesPriority) == 0
-
-	// Start timer on first message or after a failed sync routine
-	startRoutine := false
-	if allEmpty || len(c.errCh) > 0 {
-
-		// Empty error channel to not start multiple goroutines
-		for len(c.errCh) > 0 {
-			<-c.errCh
-		}
-
-		// Start timer with the default (non priority) duration
-		c.timerStartedAt = time.Now()
-		c.timer = time.NewTimer(c.delay)
-		startRoutine = true
-	}
-
-	// Check whether timer needs to execute sooner
-	if len(c.messages)+len(c.messagesPriority) >= 1000 {
-
-		// Cached messages are getting too much, SMTP delivery might not be guaranteed anymore, send messages now.
-		// A negative duration triggers the timer immediately.
-		c.timer.Reset(-1)
-
-	} else if c.priority.Enabled(ent.Level) && len(c.messagesPriority) == 0 {
-
-		// Update the timer duration if this is the first entry with a priority level. In case the timer has already
-		// expired, we would reset it to a negative duration, because it is enforced that the priority delay is smaller
-		// than the regular delay. A negative duration triggers the timer immediately.
-		remainingDuration := c.delayPriority - time.Since(c.timerStartedAt)
-		c.timer.Reset(remainingDuration)
-	}
-
-	// Add message to queue
-	if c.priority.Enabled(ent.Level) {
-		c.messagesPriority = append(c.messagesPriority, buf)
-	} else if c.Enabled(ent.Level) {
-		c.messages = append(c.messages, buf)
-	}
-
-	// At this point we're not accessing the message buffer anymore
-	c.mutex.Unlock()
-
-	// Since we may be crashing the program, sync the output. Ignore Sync
-	// errors, pending a clean solution to issue #370.
-	// https://github.com/uber-go/zap/issues/500
-	if ent.Level > zapcore.ErrorLevel {
-		errSync := c.Sync()
-		if errSync != nil {
-			return errSync
-		}
-	}
-
-	// Start a new goroutine for syncing after the timer expired.
-	if startRoutine {
-		go func() {
-			<-c.timer.C
-
-			errSync := c.Sync()
-			if errSync != nil {
-				c.errCh <- errSync
-			}
-		}()
-	}
-
-	// Return nil as everything went fine
-	return nil
+	return clone
 }
 
-// Sync flushes buffered logs (if any). Will create and send the message to the writer.
-func (c *DelayedCore) Sync() error {
-
-	// Request mutex to avoid changes to messages while resetting everything
-	c.mutex.Lock()
-
-	// Return if there are no buffered messages, necessary, if the Sync is called externally
-	if len(c.messagesPriority) == 0 && len(c.messages) == 0 {
-		c.mutex.Unlock()
-		return nil
-	}
-
-	// Combine the priority and standard messages prepended with a nice header
-	msg := make([]byte, 0, 1024*(len(c.messagesPriority)+len(c.messages))) // Assume a default log size of 1 KiB
-
-	// Append Priority messages
-	if len(c.messagesPriority) > 0 {
-		msg = append(msg, []byte("=== Priority Log ===\n")...)
-		for _, buf := range c.messagesPriority {
-			msg = append(msg, buf.Bytes()...)
-		}
-
-		msg = append(msg, []byte("\n")...)
-		msg = append(msg, []byte("\n")...)
-	}
-
-	// Append standard messages
-	if len(c.messages) > 0 {
-		msg = append(msg, []byte("=== Standard Log ===\n")...)
-		for _, buf := range c.messages {
-			msg = append(msg, buf.Bytes()...)
-		}
-	}
-
-	// Write message
-	_, errWrite := c.out.Write(msg)
-	if errWrite != nil {
-		c.mutex.Unlock()
-		return errWrite
-	}
-
-	// Sync out to make sure messages are written (might be an empty function depending on writeSyncer)
-	errSync := c.out.Sync()
-	if errSync != nil {
-		c.mutex.Unlock()
-		return errSync
-	}
-
-	// Free buffers only after a successful write
-	for _, buf := range c.messagesPriority {
-		buf.Free()
-	}
-	for _, buf := range c.messages {
-		buf.Free()
-	}
-
-	// Clear the slice after a successful write but keep the allocated memory
-	c.messagesPriority = c.messagesPriority[:0]
-	c.messages = c.messages[:0]
-
-	// At this point we're not accessing the message buffer anymore
-	c.mutex.Unlock()
-
-	// Check if previous timed sync runs (asynchronous) had errors
-	var errSyncTimed error
-loop:
-	for {
-		select {
-		case e := <-c.errCh:
-			errSyncTimed = multierr.Append(errSyncTimed, e)
-		default:
-			break loop
-		}
-	}
-	if errSyncTimed != nil {
-		return errSyncTimed
-	}
-
-	// Return nil if everything went fine
-	return nil
-}
-
+// clone creates a shallow copy of the DelayedCore sharing the same output writer and signal channel.
 func (c *DelayedCore) clone() *DelayedCore {
 	return &DelayedCore{
-		LevelEnabler: c.LevelEnabler,
-		priority:     c.priority,
-		enc:          c.enc.Clone(),
-		out:          c.out,
+		LevelEnabler:         c.LevelEnabler,
+		levelEnablerPriority: c.levelEnablerPriority,
+		encoder:              c.encoder.Clone(),
+		writeSyncer:          c.writeSyncer,
+		chSignal:             c.chSignal,
 	}
 }

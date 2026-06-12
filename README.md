@@ -48,12 +48,12 @@ func Exmaple() {
     defer func() { _ = fnCleanup() }()
 
     // Define the encoder
-    enc := zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
+    encoder := zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
 
     // Prepare SMTP core
     smtpCore, errSmtpCore := ZapSmtp.NewDelayedCore(
         zapcore.WarnLevel,
-        enc,
+        encoder,
         smtpWriteSyncer,
         zapcore.ErrorLevel,
         time.Minute*1,

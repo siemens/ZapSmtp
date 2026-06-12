@@ -122,6 +122,7 @@ func (message *Message) Message() ([]byte, error) {
 	}
 	qpWriter := quotedprintable.NewWriter(bodyPart)
 	if _, errQpWrite := qpWriter.Write(message.rawMessage); errQpWrite != nil {
+		_ = qpWriter.Close()
 		return nil, fmt.Errorf("could not write body part: %w", errQpWrite)
 	}
 	_ = qpWriter.Close()
@@ -146,6 +147,7 @@ func (message *Message) Message() ([]byte, error) {
 		}
 		b64Writer := base64.NewEncoder(base64.StdEncoding, partWriter)
 		if _, errWrite := b64Writer.Write(content); errWrite != nil {
+			_ = b64Writer.Close()
 			return nil, fmt.Errorf("could not write attachment part for '%s': %w", filename, errWrite)
 		}
 		_ = b64Writer.Close()
