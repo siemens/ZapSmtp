@@ -25,7 +25,7 @@ import (
 	. "go.uber.org/zap/zapcore"
 )
 
-// A Syncer is a spy for the Sync portion of zapcore.WriteSyncer.
+// Syncer is a spy for the Sync portion of zapcore.WriteSyncer.
 type Syncer struct {
 	err    error
 	called bool
@@ -47,7 +47,7 @@ func (s *Syncer) Called() bool {
 	return s.called
 }
 
-// A Discarder sends all writes to ioutil.Discard.
+// Discarder sends all writes to io.Discard.
 type Discarder struct{ Syncer }
 
 // Write implements io.Writer.
@@ -63,11 +63,13 @@ type OneTimeFailWriter struct {
 
 // Write implements io.Writer.
 func (w *OneTimeFailWriter) Write(b []byte) (int, error) {
-	var err error
-	w.Once.Do(func() { err = fmt.Errorf("failed") })
-	return len(b), err
+
+	var errWrite error
+	w.Once.Do(func() { errWrite = fmt.Errorf("failed") })
+	return len(b), errWrite
 }
 
+// testEncoderConfig returns a JSON encoder config suitable for test assertions.
 func testEncoderConfig() EncoderConfig {
 	return EncoderConfig{
 		MessageKey:     "msg",
@@ -85,21 +87,23 @@ func testEncoderConfig() EncoderConfig {
 	}
 }
 
+// makeInt64Field creates a zap Field with the given key and integer value.
 func makeInt64Field(key string, val int) Field {
 	return Field{Type: Int64Type, Integer: int64(val), Key: key}
 }
 
-func TestDelayedCore(t *testing.T) {
+// TestDelayedCore_WithClonedCore_WritesGroupedOutput verifies that messages written via a cloned core produce
+// grouped output with priority and standard sections
+func TestDelayedCore_WithClonedCore_WritesGroupedOutput(t *testing.T) {
 
-	// Drop timestamps for simpler assertions (timestamp encoding is tested
-	// elsewhere).
+	// Drop timestamps for simpler assertions (timestamp encoding is tested elsewhere)
 	cfg := testEncoderConfig()
 	cfg.TimeKey = ""
 
 	// Prepare out, which is a simple temporary file
 	tmpOut, errTmpOut := os.CreateTemp("", "zap-test-delayed-core-*")
 	if errTmpOut != nil {
-		t.Errorf("could not create temp out file: %s", errTmpOut)
+		t.Errorf("os.CreateTemp() error = '%v', want = nil", errTmpOut)
 		return
 	}
 	defer func() { _ = os.Remove(tmpOut.Name()) }()
@@ -114,15 +118,18 @@ func TestDelayedCore(t *testing.T) {
 		time.Second*2,
 	)
 	if errDelayedCore != nil {
-		t.Errorf("could not initialize delayed core: %s", errDelayedCore)
+		t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
 		return
 	}
+
+	// Clone the core with baked-in fields
 	delayedCoreWith := delayedCore.With([]Field{makeInt64Field("k", 1)})
 
-	// Call Sync on core
+	// Verify that Sync on an idle core succeeds
 	errSync := delayedCore.Sync()
 	if errSync != nil {
-		t.Errorf("Expected Syncing a temp file to succeed.: %s", errSync)
+		t.Errorf("Sync() error = '%v', want = nil", errSync)
+		return
 	}
 
 	// Write test messages via the cloned core (which has the "k":1 field baked in)
@@ -142,29 +149,31 @@ func TestDelayedCore(t *testing.T) {
 	// Define wanted output
 	want := []byte("=== Priority Log ===\n" +
 		`{"level":"warn","msg":"warn","k":1,"k":4}` + "\n" +
+		"\n\n" +
 		"=== Standard Log ===\n" +
 		`{"level":"info","msg":"info","k":1,"k":3}` + "\n")
 
-	// Read and check logged test messages
+	// Verify logged output matches expected grouped format
 	logged, errRead := os.ReadFile(tmpOut.Name())
 	if errRead != nil {
-		t.Errorf("could not read from temp file: %s", errRead)
+		t.Errorf("os.ReadFile() error = '%v', want = nil", errRead)
 		return
 	}
 	if !bytes.Equal(logged, want) {
-		t.Errorf("unexpected log output: %s\n, want:\n%s\n", logged, want)
+		t.Errorf("output:\ngot:\n%s\nwant:\n%s", logged, want)
 		return
 	}
 }
 
-func TestDelayedCoreSyncFail(t *testing.T) {
+// TestDelayedCore_Sync_ReturnsSyncerError verifies that Sync propagates errors from the underlying WriteSyncer
+func TestDelayedCore_Sync_ReturnsSyncerError(t *testing.T) {
 
 	// Define test error
-	err := fmt.Errorf("failed")
+	errTest := fmt.Errorf("failed")
 
 	// Prepare out, which just discards messages
 	out := &Discarder{}
-	out.SetError(err)
+	out.SetError(errTest)
 
 	// Prepare core
 	delayedCore, errDelayedCore := NewDelayedCore(
@@ -176,97 +185,168 @@ func TestDelayedCoreSyncFail(t *testing.T) {
 		time.Second*2,
 	)
 	if errDelayedCore != nil {
-		t.Errorf("could not initialize delayed core: %s", errDelayedCore)
+		t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
 		return
 	}
 
 	// Add log message otherwise Sync would return immediately
 	errWrite := delayedCore.Write(Entry{Level: WarnLevel}, nil)
 	if errWrite != nil {
-		t.Errorf("could not prepare log messages: %s", errWrite)
+		t.Errorf("Write() error = '%v', want = nil", errWrite)
 		return
 	}
 
-	// Call Sync and check result
+	// Verify that Sync returns the underlying syncer error
 	errSync := delayedCore.Sync()
-	if !errors.Is(errSync, err) {
-		t.Errorf("expected Sync to return errors from underlying SmtpSyncer: got %v, want %v", errSync, err)
+	if !errors.Is(errSync, errTest) {
+		t.Errorf("Sync() error = '%v', want = '%v'", errSync, errTest)
 		return
 	}
 }
 
-// TestDelayedCoreSyncsOutput tests for the particular case, where high level log entries (> zapcore.ErrorLevel) will
-// trigger an immediate sync
-func TestDelayedCoreSyncsOutput(t *testing.T) {
+// TestDelayedCore_CriticalLevel_FlushesImmediately verifies that log entries above ErrorLevel trigger an immediate sync
+func TestDelayedCore_CriticalLevel_FlushesImmediately(t *testing.T) {
+
+	// Prepare and run test cases
 	tests := []struct {
+		name       string
 		entry      Entry
 		shouldSync bool
 	}{
-		{Entry{Level: DebugLevel}, false},
-		{Entry{Level: InfoLevel}, false},
-		{Entry{Level: WarnLevel}, false},
-		{Entry{Level: ErrorLevel}, false},
-		{Entry{Level: DPanicLevel}, true},
-		{Entry{Level: PanicLevel}, true},
-		{Entry{Level: FatalLevel}, true},
+		{"debug-no-sync", Entry{Level: DebugLevel}, false},
+		{"info-no-sync", Entry{Level: InfoLevel}, false},
+		{"warn-no-sync", Entry{Level: WarnLevel}, false},
+		{"error-no-sync", Entry{Level: ErrorLevel}, false},
+		{"dpanic-immediate-sync", Entry{Level: DPanicLevel}, true},
+		{"panic-immediate-sync", Entry{Level: PanicLevel}, true},
+		{"fatal-immediate-sync", Entry{Level: FatalLevel}, true},
 	}
-	for i, tt := range tests {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 
-		// Prepare out, which just discards messages
-		out := &Discarder{}
+			// Prepare out, which just discards messages
+			out := &Discarder{}
 
-		// Prepare core
-		delayedCore, errDelayedCore := NewDelayedCore(
-			DebugLevel,
-			NewJSONEncoder(testEncoderConfig()),
-			out,
-			ErrorLevel,
-			time.Minute*10, // Very long delay, so only panic and fatal lvl will be synced
-			time.Minute*10, // Very long delay, so only panic and fatal lvl will be synced
-		)
-		if errDelayedCore != nil {
-			t.Errorf("could not initialize delayed core: %s", errDelayedCore)
-			return
-		}
+			// Prepare core
+			delayedCore, errDelayedCore := NewDelayedCore(
+				DebugLevel,
+				NewJSONEncoder(testEncoderConfig()),
+				out,
+				ErrorLevel,
+				time.Minute*10, // Very long delay, so only panic and fatal lvl will be synced
+				time.Minute*10, // Very long delay, so only panic and fatal lvl will be synced
+			)
+			if errDelayedCore != nil {
+				t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
+				return
+			}
 
-		// Write entry
-		_ = delayedCore.Write(tt.entry, nil)
+			// Write entry
+			_ = delayedCore.Write(tt.entry, nil)
 
-		// Check if out got called
-		if tt.shouldSync != out.Called() {
-			t.Errorf("incorrect Sync behavior. %d", i)
-			return
-		}
+			// Verify that Sync was called as expected
+			if tt.shouldSync != out.Called() {
+				t.Errorf("Syncer.Called() = '%v', want = '%v'", out.Called(), tt.shouldSync)
+				return
+			}
+		})
 	}
 }
 
-// TestDelayedCoreDelayedSyncsOutput tests the delayed syncing triggered by a Write
-func TestDelayedCoreDelayedSyncsOutput(t *testing.T) {
+// TestDelayedCore_DelayedSync_FlushesAfterDelay verifies the delayed syncing triggered by a Write
+func TestDelayedCore_DelayedSync_FlushesAfterDelay(t *testing.T) {
+
+	// Prepare and run test cases
 	tests := []struct {
 		name       string
 		entries    []Entry
 		delay      time.Duration
 		shouldSync bool
 	}{
-		{"1", []Entry{{Level: InfoLevel}}, time.Second * 4, true}, // Log level is not checked by the write function
-		{"2", []Entry{{Level: DebugLevel}}, time.Second, false},
-		{"3", []Entry{{Level: DebugLevel}}, time.Second * 4, true},
-		{"4", []Entry{{Level: WarnLevel}}, time.Second, false},
-		{"5", []Entry{{Level: WarnLevel}}, time.Second * 2, true},
-		{"6", []Entry{{Level: DebugLevel}, {Level: WarnLevel}}, time.Second, false},
-		{"7", []Entry{{Level: DebugLevel}, {Level: WarnLevel}}, time.Second * 2, true},
-		{"8", []Entry{{Level: WarnLevel}, {Level: DebugLevel}}, time.Second, false},
-		{"9", []Entry{{Level: WarnLevel}, {Level: DebugLevel}}, time.Second * 2, true},
-		{"10", []Entry{{Level: WarnLevel}, {Level: WarnLevel}}, time.Second, false},
-		{"11", []Entry{{Level: WarnLevel}, {Level: WarnLevel}}, time.Second * 2, true},
-		{"12", []Entry{{Level: DebugLevel}, {Level: DebugLevel}}, time.Second * 2, false},
-		{"13", []Entry{{Level: DebugLevel}, {Level: DebugLevel}}, time.Second * 4, true},
+		{
+			"info-after-standard-delay-syncs",
+			[]Entry{{Level: InfoLevel}},
+			time.Second * 4,
+			true,
+		}, // Log level is not checked by the write function
+		{
+			"debug-before-standard-delay-no-sync",
+			[]Entry{{Level: DebugLevel}},
+			time.Second,
+			false,
+		},
+		{
+			"debug-after-standard-delay-syncs",
+			[]Entry{{Level: DebugLevel}},
+			time.Second * 4,
+			true,
+		},
+		{
+			"warn-before-priority-delay-no-sync",
+			[]Entry{{Level: WarnLevel}},
+			time.Second,
+			false,
+		},
+		{
+			"warn-after-priority-delay-syncs",
+			[]Entry{{Level: WarnLevel}},
+			time.Second * 2,
+			true,
+		},
+		{
+			"debug-then-warn-before-priority-delay-no-sync",
+			[]Entry{{Level: DebugLevel}, {Level: WarnLevel}},
+			time.Second,
+			false,
+		},
+		{
+			"debug-then-warn-after-priority-delay-syncs",
+			[]Entry{{Level: DebugLevel}, {Level: WarnLevel}},
+			time.Second * 2,
+			true,
+		},
+		{
+			"warn-then-debug-before-priority-delay-no-sync",
+			[]Entry{{Level: WarnLevel}, {Level: DebugLevel}},
+			time.Second,
+			false,
+		},
+		{
+			"warn-then-debug-after-priority-delay-syncs",
+			[]Entry{{Level: WarnLevel}, {Level: DebugLevel}},
+			time.Second * 2,
+			true,
+		},
+		{
+			"two-warn-before-priority-delay-no-sync",
+			[]Entry{{Level: WarnLevel}, {Level: WarnLevel}},
+			time.Second,
+			false,
+		},
+		{
+			"two-warn-after-priority-delay-syncs",
+			[]Entry{{Level: WarnLevel}, {Level: WarnLevel}},
+			time.Second * 2,
+			true,
+		},
+		{
+			"two-debug-before-standard-delay-no-sync",
+			[]Entry{{Level: DebugLevel}, {Level: DebugLevel}},
+			time.Second * 2,
+			false,
+		},
+		{
+			"two-debug-after-standard-delay-syncs",
+			[]Entry{{Level: DebugLevel}, {Level: DebugLevel}},
+			time.Second * 4,
+			true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			// Allow tests to run in parallel to save tim on the hardcoded wait times
+			// Allow tests to run in parallel to save time on the hardcoded wait times
 			t.Parallel()
 
 			// Prepare out, which just discards messages
@@ -282,7 +362,7 @@ func TestDelayedCoreDelayedSyncsOutput(t *testing.T) {
 				time.Second*2,
 			)
 			if errDelayedCore != nil {
-				t.Errorf("could not initialize delayed core: %s", errDelayedCore)
+				t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
 				return
 			}
 
@@ -295,15 +375,231 @@ func TestDelayedCoreDelayedSyncsOutput(t *testing.T) {
 			// additional delay
 			time.Sleep(tt.delay + time.Millisecond*100)
 
-			// Check if Sync got called correctly
+			// Verify that Sync was called as expected
 			if tt.shouldSync != out.Called() {
-				t.Error("incorrect delay behavior.")
+				t.Errorf("Syncer.Called() = '%v', want = '%v'", out.Called(), tt.shouldSync)
 			}
 		})
 	}
 }
 
-func TestDelayedCoreWriteFailure(t *testing.T) {
+// TestDelayedCore_InvalidDelay_ReturnsError verifies that NewDelayedCore rejects delay < delayPriority
+func TestDelayedCore_InvalidDelay_ReturnsError(t *testing.T) {
+
+	// Prepare and run test cases
+	_, errDelayedCore := NewDelayedCore(
+		DebugLevel,
+		NewJSONEncoder(testEncoderConfig()),
+		&Discarder{},
+		WarnLevel,
+		time.Second*1,
+		time.Second*2,
+	)
+
+	// Verify that an error is returned for invalid delay configuration
+	if errDelayedCore == nil {
+		t.Error("NewDelayedCore() error = nil, want error for delay < delayPriority")
+		return
+	}
+}
+
+// TestDelayedCore_SyncEmpty_ReturnsNil verifies that Sync on an empty queue returns nil
+func TestDelayedCore_SyncEmpty_ReturnsNil(t *testing.T) {
+
+	// Prepare core
+	delayedCore, errDelayedCore := NewDelayedCore(
+		DebugLevel,
+		NewJSONEncoder(testEncoderConfig()),
+		&Discarder{},
+		WarnLevel,
+		time.Second*4,
+		time.Second*2,
+	)
+	if errDelayedCore != nil {
+		t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
+		return
+	}
+
+	// Verify that Sync returns nil when no messages are queued
+	errSync := delayedCore.Sync()
+	if errSync != nil {
+		t.Errorf("Sync() error = '%v', want = nil", errSync)
+		return
+	}
+}
+
+// TestDelayedCore_Check_RejectsDisabledLevel verifies that Check does not add the core for levels below both enablers
+func TestDelayedCore_Check_RejectsDisabledLevel(t *testing.T) {
+
+	// Prepare core with InfoLevel as standard and WarnLevel as priority
+	delayedCore, errDelayedCore := NewDelayedCore(
+		InfoLevel,
+		NewJSONEncoder(testEncoderConfig()),
+		&Discarder{},
+		WarnLevel,
+		time.Second*4,
+		time.Second*2,
+	)
+	if errDelayedCore != nil {
+		t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
+		return
+	}
+
+	// Verify that DebugLevel is rejected by Check (below both enablers)
+	ce := delayedCore.Check(Entry{Level: DebugLevel, Message: "debug"}, nil)
+	if ce != nil {
+		t.Error("Check() returned non-nil CheckedEntry for DebugLevel, want nil")
+		return
+	}
+}
+
+// TestDelayedCore_Check_AcceptsPriorityOnlyLevel verifies that Check adds the core when the level
+// satisfies only the priority enabler but not the standard enabler
+func TestDelayedCore_Check_AcceptsPriorityOnlyLevel(t *testing.T) {
+
+	// Prepare core with ErrorLevel as standard and InfoLevel as priority
+	delayedCore, errDelayedCore := NewDelayedCore(
+		ErrorLevel,
+		NewJSONEncoder(testEncoderConfig()),
+		&Discarder{},
+		InfoLevel,
+		time.Second*4,
+		time.Second*2,
+	)
+	if errDelayedCore != nil {
+		t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
+		return
+	}
+
+	// Verify that WarnLevel is accepted (below standard ErrorLevel but above priority InfoLevel)
+	ce := delayedCore.Check(Entry{Level: WarnLevel, Message: "warn"}, nil)
+	if ce == nil {
+		t.Error("Check() returned nil for WarnLevel, want non-nil (priority enabler should accept)")
+		return
+	}
+}
+
+// TestDelayedCore_OnlyStandardMessages_OmitsPrioritySection verifies output format when no priority messages exist
+func TestDelayedCore_OnlyStandardMessages_OmitsPrioritySection(t *testing.T) {
+
+	// Drop timestamps for simpler assertions
+	cfg := testEncoderConfig()
+	cfg.TimeKey = ""
+
+	// Prepare out, which is a simple temporary file
+	tmpOut, errTmpOut := os.CreateTemp("", "zap-test-delayed-core-*")
+	if errTmpOut != nil {
+		t.Errorf("os.CreateTemp() error = '%v', want = nil", errTmpOut)
+		return
+	}
+	defer func() { _ = os.Remove(tmpOut.Name()) }()
+
+	// Prepare core with WarnLevel as priority (only InfoLevel messages will be written)
+	delayedCore, errDelayedCore := NewDelayedCore(
+		InfoLevel,
+		NewJSONEncoder(cfg),
+		tmpOut,
+		WarnLevel,
+		time.Second*4,
+		time.Second*2,
+	)
+	if errDelayedCore != nil {
+		t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
+		return
+	}
+
+	// Write only a standard-level message
+	errWrite := delayedCore.Write(Entry{Level: InfoLevel, Message: "info-only"}, nil)
+	if errWrite != nil {
+		t.Errorf("Write() error = '%v', want = nil", errWrite)
+		return
+	}
+
+	// Flush immediately
+	errSync := delayedCore.Sync()
+	if errSync != nil {
+		t.Errorf("Sync() error = '%v', want = nil", errSync)
+		return
+	}
+
+	// Define wanted output (no priority section)
+	want := []byte("=== Standard Log ===\n" +
+		`{"level":"info","msg":"info-only"}` + "\n")
+
+	// Verify output contains only the standard section
+	logged, errRead := os.ReadFile(tmpOut.Name())
+	if errRead != nil {
+		t.Errorf("os.ReadFile() error = '%v', want = nil", errRead)
+		return
+	}
+	if !bytes.Equal(logged, want) {
+		t.Errorf("output:\ngot:\n%s\nwant:\n%s", logged, want)
+		return
+	}
+}
+
+// TestDelayedCore_OnlyPriorityMessages_OmitsStandardSection verifies output format when no standard messages exist
+func TestDelayedCore_OnlyPriorityMessages_OmitsStandardSection(t *testing.T) {
+
+	// Drop timestamps for simpler assertions
+	cfg := testEncoderConfig()
+	cfg.TimeKey = ""
+
+	// Prepare out, which is a simple temporary file
+	tmpOut, errTmpOut := os.CreateTemp("", "zap-test-delayed-core-*")
+	if errTmpOut != nil {
+		t.Errorf("os.CreateTemp() error = '%v', want = nil", errTmpOut)
+		return
+	}
+	defer func() { _ = os.Remove(tmpOut.Name()) }()
+
+	// Prepare core with InfoLevel as priority (WarnLevel satisfies both standard and priority)
+	delayedCore, errDelayedCore := NewDelayedCore(
+		WarnLevel,
+		NewJSONEncoder(cfg),
+		tmpOut,
+		InfoLevel,
+		time.Second*4,
+		time.Second*2,
+	)
+	if errDelayedCore != nil {
+		t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
+		return
+	}
+
+	// Write only a priority-level message
+	errWrite := delayedCore.Write(Entry{Level: WarnLevel, Message: "warn-only"}, nil)
+	if errWrite != nil {
+		t.Errorf("Write() error = '%v', want = nil", errWrite)
+		return
+	}
+
+	// Flush immediately
+	errSync := delayedCore.Sync()
+	if errSync != nil {
+		t.Errorf("Sync() error = '%v', want = nil", errSync)
+		return
+	}
+
+	// Define wanted output (no standard section, with trailing newlines after priority)
+	want := []byte("=== Priority Log ===\n" +
+		`{"level":"warn","msg":"warn-only"}` + "\n" +
+		"\n\n")
+
+	// Verify output contains only the priority section
+	logged, errRead := os.ReadFile(tmpOut.Name())
+	if errRead != nil {
+		t.Errorf("os.ReadFile() error = '%v', want = nil", errRead)
+		return
+	}
+	if !bytes.Equal(logged, want) {
+		t.Errorf("output:\ngot:\n%s\nwant:\n%s", logged, want)
+		return
+	}
+}
+
+// TestDelayedCore_WriteFailure_RetriesSuccessfully verifies that a transient write failure is retried successfully
+func TestDelayedCore_WriteFailure_RetriesSuccessfully(t *testing.T) {
 
 	// Prepare out, which returns an error after the first write
 	out := Lock(&OneTimeFailWriter{})
@@ -318,14 +614,14 @@ func TestDelayedCoreWriteFailure(t *testing.T) {
 		0,
 	)
 	if errDelayedCore != nil {
-		t.Errorf("could not initialize delayed core: %s", errDelayedCore)
+		t.Errorf("NewDelayedCore() error = '%v', want = nil", errDelayedCore)
 		return
 	}
 
-	// Sync shouldn't return an error yet, because no Write was called yet
+	// Verify that Sync returns nil when no Write was called yet
 	errSync1 := delayedCore.Sync()
 	if errSync1 != nil {
-		t.Errorf("Unexpected Sync error: %s", errSync1)
+		t.Errorf("Sync() error = '%v', want = nil", errSync1)
 		return
 	}
 
@@ -333,17 +629,17 @@ func TestDelayedCoreWriteFailure(t *testing.T) {
 	// The first write fails (OneTimeFailWriter), but the goroutine retries after delayPriority (0) and succeeds.
 	errWrite := delayedCore.Write(Entry{}, nil)
 	if errWrite != nil {
-		t.Errorf("Unexpected Write error: %s", errWrite)
+		t.Errorf("Write() error = '%v', want = nil", errWrite)
 		return
 	}
 
 	// Wait for the retry to succeed (delayPriority is 0, so retry is near-instant)
 	time.Sleep(time.Millisecond * 500)
 
-	// After retry, a Sync should succeed with no queued messages
+	// Verify that Sync succeeds after retry with no queued messages
 	errSync2 := delayedCore.Sync()
 	if errSync2 != nil {
-		t.Errorf("Expected Sync to succeed after retry, got: %s", errSync2)
+		t.Errorf("Sync() error = '%v', want = nil", errSync2)
 		return
 	}
 }
