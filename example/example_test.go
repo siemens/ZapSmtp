@@ -24,6 +24,12 @@ import (
 
 func Test_example(t *testing.T) {
 
+	// Skip if test configuration is incomplete
+	if _test.SmtpServer == "" || _test.SmtpUser == "" || _test.SmtpPassword == "" {
+		t.Skip("Integration test skipped: SMTP server connection details not configured in _test/unitTestConf.go")
+		return
+	}
+
 	// Prepare memory for Zap cores
 	cores := make([]zapcore.Core, 0, 2)
 

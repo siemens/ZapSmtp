@@ -1,7 +1,7 @@
 /*
 * ZapSmtp, a Zap (Golang) logger extension for sending urgent log messages via SMTP
 *
-* Copyright (c) Siemens AG, 2021-2025.
+* Copyright (c) Siemens AG, 2021-2026.
 *
 * This work is licensed under the terms of the MIT license. For a copy, see the LICENSE file in the top-level
 * directory or visit <https://opensource.org/licenses/MIT>.
@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -23,11 +22,13 @@ import (
 	"github.com/siemens/ZapSmtp/_test"
 )
 
-func Test_PrepareSignatureKeys(t *testing.T) {
+// TestPrepareSignatureKeys_VariousFormats_ConvertsAndValidates verifies that PrepareSignatureKeys correctly converts
+// DER and PEM certificates and keys, and rejects invalid inputs
+func TestPrepareSignatureKeys_VariousFormats_ConvertsAndValidates(t *testing.T) {
 
-	// Make sure all the variables needed for the tests are set
+	// Skip if test configuration is incomplete
 	if _test.OpensslPath == "" || _test.Cert2Path == "" || _test.Cert1Path == "" || _test.Key1Path == "" {
-		t.Errorf("please fill out the test configuration and restart the test")
+		t.Skip("Integration test skipped: OpenSSL path or certificate/key paths not configured in _test/unitTestConf.go")
 		return
 	}
 
@@ -87,9 +88,9 @@ func Test_PrepareSignatureKeys(t *testing.T) {
 		{"valid-der-pem", args{_test.OpensslPath, certDer, keyPem}, wantCert, wantKey, false},
 		{"valid-pem-der", args{_test.OpensslPath, certPem, keyDer}, wantCert, wantKey, false},
 		{"valid-der-der", args{_test.OpensslPath, certDer, keyDer}, wantCert, wantKey, false},
-		{"invalid-exe", args{"notexisting", certPem, keyPem}, nil, nil, true},
-		{"invalid-exe", args{"", certPem, keyPem}, nil, nil, true},
-		{"invalid-exe", args{"notexisting", certDer, keyDer}, nil, nil, true},
+		{"invalid-nonexistent-exe", args{"notexisting", certPem, keyPem}, nil, nil, true},
+		{"invalid-empty-exe", args{"", certPem, keyPem}, nil, nil, true},
+		{"invalid-nonexistent-exe-der", args{"notexisting", certDer, keyDer}, nil, nil, true},
 		{"invalid-no-cert", args{_test.OpensslPath, "", keyDer}, nil, nil, true},
 		{"invalid-no-key", args{_test.OpensslPath, certDer, ""}, nil, nil, true},
 		{"invalid-no-key-pair-pem", args{_test.OpensslPath, cert2Pem, keyPem}, nil, nil, true},
@@ -126,20 +127,22 @@ func Test_PrepareSignatureKeys(t *testing.T) {
 
 			// Make sure that all the files that we expect actually exist
 			if !bytes.Equal(got, tt.wantCert) {
-				t.Errorf("PrepareEncryptionKeys() cert got: '%v', want: '%v", got, tt.wantCert)
+				t.Errorf("PrepareSignatureKeys() cert = '%v', want = '%v'", got, tt.wantCert)
 			}
 			if !bytes.Equal(got1, tt.wantKey) {
-				t.Errorf("PrepareEncryptionKeys() key got: '%v', want: '%v", got1, tt.wantKey)
+				t.Errorf("PrepareSignatureKeys() key = '%v', want = '%v'", got1, tt.wantKey)
 			}
 		})
 	}
 }
 
-func Test_PrepareEncryptionKeys(t *testing.T) {
+// TestPrepareEncryptionKeys_VariousFormats_ConvertsAndValidates verifies that PrepareEncryptionKeys correctly converts
+// DER and PEM encryption certificates, and rejects invalid inputs
+func TestPrepareEncryptionKeys_VariousFormats_ConvertsAndValidates(t *testing.T) {
 
-	// Make sure all the variables needed for the tests are set
+	// Skip if test configuration is incomplete
 	if _test.OpensslPath == "" || _test.Cert2Path == "" || _test.Cert1Path == "" {
-		t.Errorf("please fill out the test configuration and restart the test")
+		t.Skip("Integration test skipped: OpenSSL path or certificate paths not configured in _test/unitTestConf.go")
 		return
 	}
 
@@ -194,8 +197,8 @@ func Test_PrepareEncryptionKeys(t *testing.T) {
 		{"valid-multiple-recipients-pem-der", args{_test.OpensslPath, []string{cert1Pem, cert2Der}}, [][]byte{wantCert1, wantCert2}, false},
 		{"valid-multiple-recipients-der-der", args{_test.OpensslPath, []string{cert1Der, cert2Der}}, [][]byte{wantCert1, wantCert2}, false},
 		{"valid-no-cert", args{_test.OpensslPath, []string{}}, [][]byte{}, false},
-		{"valid-no-exe", args{"notexisting", []string{cert1Pem}}, [][]byte{wantCert1}, false}, // Only .der format needs an openssl executable, as we do nothing in the other case
-		{"valid-no-exe", args{"", []string{cert1Pem}}, [][]byte{wantCert1}, false},            // Only .der format needs an openssl executable, as we do nothing in the other case
+		{"valid-no-exe-nonexistent", args{"notexisting", []string{cert1Pem}}, [][]byte{wantCert1}, false}, // Only .der format needs an openssl executable, as we do nothing in the other case
+		{"valid-no-exe-empty", args{"", []string{cert1Pem}}, [][]byte{wantCert1}, false},                  // Only .der format needs an openssl executable, as we do nothing in the other case
 		{"invalid-exe", args{"notexisting", []string{cert1Der}}, [][]byte{}, true},
 	}
 	for _, tt := range tests {
@@ -221,7 +224,7 @@ func Test_PrepareEncryptionKeys(t *testing.T) {
 
 			// Check correct number
 			if len(got) != len(tt.want) {
-				t.Errorf("PrepareEncryptionKeys() number of certs got: '%v', want: '%v", len(got), len(tt.want))
+				t.Errorf("PrepareEncryptionKeys() number of certs = '%v', want = '%v'", len(got), len(tt.want))
 				return
 			}
 
@@ -231,18 +234,20 @@ func Test_PrepareEncryptionKeys(t *testing.T) {
 
 				// Make sure that all the files that we expect actually exist
 				if !bytes.Equal(c, tt.want[i]) {
-					t.Errorf("PrepareEncryptionKeys() cert got: '%v', want: '%v", c, tt.want[i])
+					t.Errorf("PrepareEncryptionKeys() cert = '%v', want = '%v'", c, tt.want[i])
 				}
 			}
 		})
 	}
 }
 
-func Test_certToPem(t *testing.T) {
+// TestCertToPem_VariousInputs_ConvertsOrRejects verifies that CertToPem correctly converts DER certificates to PEM
+// and rejects invalid inputs
+func TestCertToPem_VariousInputs_ConvertsOrRejects(t *testing.T) {
 
-	// Make sure all the variables needed for the tests are set
+	// Skip if test configuration is incomplete
 	if _test.OpensslPath == "" || _test.Cert1Path == "" {
-		t.Errorf("please fill out the test configuration and restart the test")
+		t.Skip("Integration test skipped: OpenSSL path or certificate path not configured in _test/unitTestConf.go")
 		return
 	}
 
@@ -300,18 +305,20 @@ func Test_certToPem(t *testing.T) {
 			got = bytes.ReplaceAll(got, []byte{13}, []byte{})
 			want := bytes.ReplaceAll(tt.want, []byte{13}, []byte{})
 
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("derToPem() got = '%v', want '%v'", got, want)
+			if !bytes.Equal(got, want) {
+				t.Errorf("CertToPem() got = '%v', want = '%v'", got, want)
 			}
 		})
 	}
 }
 
-func Test_keyToPem(t *testing.T) {
+// TestKeyToPem_VariousInputs_ConvertsOrRejects verifies that KeyToPem correctly converts DER keys to PEM
+// and rejects invalid inputs
+func TestKeyToPem_VariousInputs_ConvertsOrRejects(t *testing.T) {
 
-	// Make sure all the variables needed for the tests are set
+	// Skip if test configuration is incomplete
 	if _test.OpensslPath == "" || _test.Key1Path == "" {
-		t.Errorf("please fill out the test configuration and restart the test")
+		t.Skip("Integration test skipped: OpenSSL path or key path not configured in _test/unitTestConf.go")
 		return
 	}
 
@@ -372,18 +379,20 @@ func Test_keyToPem(t *testing.T) {
 			want := bytes.ReplaceAll(tt.want, []byte{13}, []byte{})
 
 			// Check result
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("derToPem() got = '%v',\nwant '%v'", got, want)
+			if !bytes.Equal(got, want) {
+				t.Errorf("KeyToPem() got = '%v', want = '%v'", got, want)
 			}
 		})
 	}
 }
 
-func Test_signMessage(t *testing.T) {
+// TestSignMessage_VariousInputs_SignsOrRejects verifies that SignMessage correctly signs messages and rejects
+// invalid inputs
+func TestSignMessage_VariousInputs_SignsOrRejects(t *testing.T) {
 
-	// Make sure all the variables needed for the tests are set
+	// Skip if test configuration is incomplete
 	if _test.OpensslPath == "" || _test.Cert1Path == "" || _test.Key1Path == "" {
-		t.Errorf("please fill out the test configuration and restart the test")
+		t.Skip("Integration test skipped: OpenSSL path or certificate/key paths not configured in _test/unitTestConf.go")
 		return
 	}
 
@@ -474,11 +483,13 @@ func Test_signMessage(t *testing.T) {
 	}
 }
 
-func Test_encryptMessage(t *testing.T) {
+// TestEncryptMessage_VariousInputs_EncryptsOrRejects verifies that EncryptMessage correctly encrypts messages and
+// rejects invalid inputs
+func TestEncryptMessage_VariousInputs_EncryptsOrRejects(t *testing.T) {
 
-	// Make sure all the variables needed for the tests are set
+	// Skip if test configuration is incomplete
 	if _test.OpensslPath == "" || _test.Cert2Path == "" || _test.Key2Path == "" || _test.Cert1Path == "" || _test.Key1Path == "" {
-		t.Errorf("please fill out the test configuration and restart the test")
+		t.Skip("Integration test skipped: OpenSSL path or certificate/key paths not configured in _test/unitTestConf.go")
 		return
 	}
 

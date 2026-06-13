@@ -1,3 +1,13 @@
+/*
+* ZapSmtp, a Zap (Golang) logger extension for sending urgent log messages via SMTP
+*
+* Copyright (c) Siemens AG, 2021-2026.
+*
+* This work is licensed under the terms of the MIT license. For a copy, see the LICENSE file in the top-level
+* directory or visit <https://opensource.org/licenses/MIT>.
+*
+ */
+
 package smtp
 
 import (
@@ -95,7 +105,7 @@ func SaveToTemp(data []byte, namePattern string) (string, error) {
 	// Create temporary file and write the certificate to it
 	tmpFile, errTmp := os.CreateTemp("", namePattern)
 	if errTmp != nil {
-		return "", fmt.Errorf("could not create temporary file: %s", errTmp)
+		return "", fmt.Errorf("could not create temporary file: %w", errTmp)
 	}
 
 	// Get the path
@@ -106,14 +116,14 @@ func SaveToTemp(data []byte, namePattern string) (string, error) {
 	if errWrite != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("could not write temporary file: %s", errWrite)
+		return "", fmt.Errorf("could not write temporary file: %w", errWrite)
 	}
 
 	// Clean up the file descriptor - file needs to be removed later on.
 	errClose := tmpFile.Close()
 	if errClose != nil {
 		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("could not close temporary file: %s", errClose)
+		return "", fmt.Errorf("could not close temporary file: %w", errClose)
 	}
 
 	// Return path of the temporary file

@@ -1,7 +1,7 @@
 /*
 * ZapSmtp, a Zap (Golang) logger extension for sending urgent log messages via SMTP
 *
-* Copyright (c) Siemens AG, 2021-2025.
+* Copyright (c) Siemens AG, 2021-2026.
 *
 * This work is licensed under the terms of the MIT license. For a copy, see the LICENSE file in the top-level
 * directory or visit <https://opensource.org/licenses/MIT>.
@@ -13,27 +13,28 @@ package smtp
 import (
 	"net/mail"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/siemens/ZapSmtp/_test"
 )
 
-func TestSendMail(t *testing.T) {
+// TestSendMail_VariousConfigurations_SendsOrRejects verifies that SendMail correctly handles various signing,
+// encryption and recipient configurations
+func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 
 	// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
 	// only be reviewed manually
 
 	// Make sure all the variables needed for the tests are set
 	if _test.OpensslPath == "" {
-		t.Errorf("please configure the OpenSSL installation path and restart the test")
+		t.Skip("Integration test skipped: OpensslPath not configured in _test/unitTestConf.go")
 		return
 	}
 
 	// Make sure all the variables needed for the tests are set
 	if _test.SmtpServer == "" ||
 		_test.SmtpPort == 0 {
-		t.Errorf("please configure the SMTP server and restart the test")
+		t.Skip("Integration test skipped: SmtpServer not configured in _test/unitTestConf.go")
 		return
 	}
 
@@ -41,19 +42,19 @@ func TestSendMail(t *testing.T) {
 	if _test.Cert1Path == "" ||
 		_test.Key1Path == "" ||
 		_test.RealRecipient.Address == "" {
-		t.Errorf("please configure the recipient details and restart the test")
+		t.Skip("Integration test skipped: recipient details not configured in _test/unitTestConf.go")
 		return
 	}
 
 	// Read signature certificate bytes
 	sigCert, errSigCert := os.ReadFile(_test.Cert1Path)
 	if errSigCert != nil {
-		t.Errorf("TestSendMail() error: Could not read certificate: %v", errSigCert)
+		t.Errorf("TestSendMail_VariousConfigurations_SendsOrRejects() error: Could not read certificate: %v", errSigCert)
 		return
 	}
 	sigKey, errSigKey := os.ReadFile(_test.Key1Path)
 	if errSigKey != nil {
-		t.Errorf("TestSendMail() error: Could not read certificate: %v", errSigKey)
+		t.Errorf("TestSendMail_VariousConfigurations_SendsOrRejects() error: Could not read certificate: %v", errSigKey)
 		return
 	}
 
@@ -65,7 +66,7 @@ func TestSendMail(t *testing.T) {
 		// Read encryption certificate bytes
 		data, errReadCert := os.ReadFile(_test.RealCertPath)
 		if errReadCert != nil {
-			t.Errorf("TestSendMail() error: Could not read certificate: %v", errReadCert)
+			t.Errorf("TestSendMail_VariousConfigurations_SendsOrRejects() error: Could not read certificate: %v", errReadCert)
 			return
 		}
 		toCerts = append(toCerts, data)
@@ -243,28 +244,30 @@ func TestSendMail(t *testing.T) {
 				false, // Send as plaintext
 			)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("TestSendMail() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("SendMail() error = '%v', wantErr = '%v'", err, tt.wantErr)
 				return
 			}
 		})
 	}
 }
 
-func TestSendMail_attachment(t *testing.T) {
+// TestSendMail_WithAttachment_SendsOrRejects verifies that SendMail correctly handles file attachments
+// with various signing and encryption configurations
+func TestSendMail_WithAttachment_SendsOrRejects(t *testing.T) {
 
 	// Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
 	// only be reviewed manually
 
 	// Make sure all the variables needed for the tests are set
 	if _test.OpensslPath == "" {
-		t.Errorf("please configure the OpenSSL installation path and restart the test")
+		t.Skip("Integration test skipped: OpensslPath not configured in _test/unitTestConf.go")
 		return
 	}
 
 	// Make sure all the variables needed for the tests are set
 	if _test.SmtpServer == "" ||
 		_test.SmtpPort == 0 {
-		t.Errorf("please configure the SMTP server and restart the test")
+		t.Skip("Integration test skipped: SmtpServer not configured in _test/unitTestConf.go")
 		return
 	}
 
@@ -272,19 +275,19 @@ func TestSendMail_attachment(t *testing.T) {
 	if _test.Cert1Path == "" ||
 		_test.Key1Path == "" ||
 		_test.RealRecipient.Address == "" {
-		t.Errorf("please configure the recipient details and restart the test")
+		t.Skip("Integration test skipped: recipient details not configured in _test/unitTestConf.go")
 		return
 	}
 
 	// Read signature certificate bytes
 	sigCert, errSigCert := os.ReadFile(_test.Cert1Path)
 	if errSigCert != nil {
-		t.Errorf("TestSendMail_attachment() error: Could not read certificate: %v", errSigCert)
+		t.Errorf("TestSendMail_WithAttachment_SendsOrRejects() error: Could not read certificate: %v", errSigCert)
 		return
 	}
 	sigKey, errSigKey := os.ReadFile(_test.Key1Path)
 	if errSigKey != nil {
-		t.Errorf("TestSendMail_attachment() error: Could not read certificate: %v", errSigKey)
+		t.Errorf("TestSendMail_WithAttachment_SendsOrRejects() error: Could not read certificate: %v", errSigKey)
 		return
 	}
 
@@ -296,7 +299,7 @@ func TestSendMail_attachment(t *testing.T) {
 		// Read encryption certificate bytes
 		data, errReadCert := os.ReadFile(_test.RealCertPath)
 		if errReadCert != nil {
-			t.Errorf("TestSendMail_attachment() error: Could not read certificate: %v", errReadCert)
+			t.Errorf("TestSendMail_WithAttachment_SendsOrRejects() error: Could not read certificate: %v", errReadCert)
 			return
 		}
 		toCerts = append(toCerts, data)
@@ -407,18 +410,6 @@ func TestSendMail_attachment(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			// Read attachments
-			attachments := make(map[string][]byte)
-			for _, attachmentPath := range tt.args.attachmentPaths {
-				fileName := filepath.Base(attachmentPath)
-				fileBytes, errFileBytes := os.ReadFile(attachmentPath)
-				if errFileBytes != nil {
-					t.Errorf("TestSendMail_attachment() could not read file: %v", errFileBytes)
-					return
-				}
-				attachments[fileName] = fileBytes
-			}
-
 			// Run test
 			err := SendMail(
 				tt.args.smtpServer,
@@ -437,7 +428,7 @@ func TestSendMail_attachment(t *testing.T) {
 				false, // Send as plaintext
 			)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("TestSendMail_attachment() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("TestSendMail_WithAttachment_SendsOrRejects() error = '%v', wantErr = '%v'", err, tt.wantErr)
 				return
 			}
 		})

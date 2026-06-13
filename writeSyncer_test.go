@@ -24,11 +24,10 @@ import (
 
 func TestNewSmtpWriteSyncer(t *testing.T) {
 
-	// Make sure all the variables needed for the tests are set
+	// Skip if test configuration is incomplete
 	if _test.OpensslPath == "" || _test.MailTo.Address == "" || _test.Cert1Path == "" ||
 		_test.Key1Path == "" || _test.Cert2Path == "" {
-
-		t.Errorf("please fill out the test configuration and restart the test")
+		t.Skip("Integration test skipped: recipient details not configured in _test/unitTestConf.go")
 		return
 	}
 

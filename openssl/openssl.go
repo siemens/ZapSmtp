@@ -1,7 +1,7 @@
 /*
 * ZapSmtp, a Zap (Golang) logger extension for sending urgent log messages via SMTP
 *
-* Copyright (c) Siemens AG, 2021-2025.
+* Copyright (c) Siemens AG, 2021-2026.
 *
 * This work is licensed under the terms of the MIT license. For a copy, see the LICENSE file in the top-level
 * directory or visit <https://opensource.org/licenses/MIT>.
@@ -34,7 +34,7 @@ func CertToPem(pathOpenssl string, cert []byte) ([]byte, error) {
 	// Create temporary file for the certificate
 	tmpFile, errTmp := os.CreateTemp("", "openssl-cert-*.der")
 	if errTmp != nil {
-		return nil, fmt.Errorf("could not create temporary DER file: %v", errTmp)
+		return nil, fmt.Errorf("could not create temporary DER file: %w", errTmp)
 	}
 
 	// Cleanup temporary file afterward
@@ -46,7 +46,7 @@ func CertToPem(pathOpenssl string, cert []byte) ([]byte, error) {
 	// Write the certificate bytes to the temp file
 	_, errWrite := tmpFile.Write(cert)
 	if errWrite != nil {
-		return nil, fmt.Errorf("could not write temporary DER file: %v", errWrite)
+		return nil, fmt.Errorf("could not write temporary DER file: %w", errWrite)
 	}
 
 	// Flush content to disk
@@ -63,18 +63,18 @@ func CertToPem(pathOpenssl string, cert []byte) ([]byte, error) {
 	)
 
 	// Create the needed buffers
-	var out, errs bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errs
+	var stdOut, stdErr bytes.Buffer
+	cmd.Stdout = &stdOut
+	cmd.Stderr = &stdErr
 
 	// Run command
-	err := cmd.Run()
-	if err != nil {
-		return nil, fmt.Errorf("could not convert certificate to PEM format (%s):\n %v", err, errs.String())
+	errRun := cmd.Run()
+	if errRun != nil {
+		return nil, fmt.Errorf("could not convert certificate to PEM format (%w):\n %v", errRun, stdErr.String())
 	}
 
 	// Return output
-	return out.Bytes(), nil
+	return stdOut.Bytes(), nil
 }
 
 // KeyToPem returns the key in DER format to PEM format, it fails if the input is in any other encoding.
@@ -88,7 +88,7 @@ func KeyToPem(pathOpenssl string, key []byte) ([]byte, error) {
 	// Create temporary file for the key
 	tmpFile, errTmp := os.CreateTemp("", "openssl-key-*.der")
 	if errTmp != nil {
-		return nil, fmt.Errorf("could not create temporary DER file: %v", errTmp)
+		return nil, fmt.Errorf("could not create temporary DER file: %w", errTmp)
 	}
 
 	// Cleanup temporary file afterward
@@ -100,7 +100,7 @@ func KeyToPem(pathOpenssl string, key []byte) ([]byte, error) {
 	// Write the key bytes to the temp file
 	_, errWrite := tmpFile.Write(key)
 	if errWrite != nil {
-		return nil, fmt.Errorf("could not write temporary DER file: %v", errWrite)
+		return nil, fmt.Errorf("could not write temporary DER file: %w", errWrite)
 	}
 
 	// Flush content to disk
@@ -117,18 +117,18 @@ func KeyToPem(pathOpenssl string, key []byte) ([]byte, error) {
 	)
 
 	// Create the needed buffers
-	var out, errs bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errs
+	var stdOut, stdErr bytes.Buffer
+	cmd.Stdout = &stdOut
+	cmd.Stderr = &stdErr
 
 	// Run command
-	err := cmd.Run()
-	if err != nil {
-		return nil, fmt.Errorf("could not convert key to PEM format (%s):\n %v", err, errs.String())
+	errRun := cmd.Run()
+	if errRun != nil {
+		return nil, fmt.Errorf("could not convert key to PEM format (%w):\n %v", errRun, stdErr.String())
 	}
 
 	// Return output
-	return out.Bytes(), nil
+	return stdOut.Bytes(), nil
 }
 
 // PrepareSignatureKeys converts the sender's key pair to PEM if necessary and verifies that they are a
@@ -139,18 +139,21 @@ func PrepareSignatureKeys(
 	signatureKey []byte,
 ) ([]byte, []byte, error) {
 
-	// Check whether the certificate and key are already in PEM format, and try to convert them if not
-	var err error
+	// Check whether the certificate is already in PEM format, and try to convert it if not
 	if block, _ := pem.Decode(signatureCert); block == nil {
-		signatureCert, err = CertToPem(pathOpenssl, signatureCert)
-		if err != nil {
-			return nil, nil, fmt.Errorf("sender certificate: %s", err)
+		var errSignatureCert error
+		signatureCert, errSignatureCert = CertToPem(pathOpenssl, signatureCert)
+		if errSignatureCert != nil {
+			return nil, nil, fmt.Errorf("sender certificate: %w", errSignatureCert)
 		}
 	}
+
+	// Check whether the key is already in PEM format, and try to convert it if not
 	if block, _ := pem.Decode(signatureKey); block == nil {
-		signatureKey, err = KeyToPem(pathOpenssl, signatureKey)
-		if err != nil {
-			return nil, nil, fmt.Errorf("sender key: %s", err)
+		var errKey error
+		signatureKey, errKey = KeyToPem(pathOpenssl, signatureKey)
+		if errKey != nil {
+			return nil, nil, fmt.Errorf("sender key: %w", errKey)
 		}
 	}
 
@@ -160,14 +163,14 @@ func PrepareSignatureKeys(
 	cmd.Stdin = bytes.NewReader(signatureKey)
 
 	// Create the needed buffers
-	var outPriv, errsPriv bytes.Buffer
-	cmd.Stdout = &outPriv
-	cmd.Stderr = &errsPriv
+	var stdOutPriv, stdErrPriv bytes.Buffer
+	cmd.Stdout = &stdOutPriv
+	cmd.Stderr = &stdErrPriv
 
 	// Run command
 	errRunPriv := cmd.Run()
 	if errRunPriv != nil {
-		return nil, nil, fmt.Errorf("could not check sender's private key (%s):\n %v", errRunPriv, errsPriv.String())
+		return nil, nil, fmt.Errorf("could not check sender's private key (%w):\n %v", errRunPriv, stdErrPriv.String())
 	}
 
 	// Secondly read the public key from the certificate
@@ -175,18 +178,18 @@ func PrepareSignatureKeys(
 	cmd.Stdin = bytes.NewReader(signatureCert)
 
 	// Create the needed buffers
-	var outPub, errsPub bytes.Buffer
-	cmd.Stdout = &outPub
-	cmd.Stderr = &errsPub
+	var stdOutPub, stdErrPub bytes.Buffer
+	cmd.Stdout = &stdOutPub
+	cmd.Stderr = &stdErrPub
 
 	// Run command
 	errRunPub := cmd.Run()
 	if errRunPub != nil {
-		return nil, nil, fmt.Errorf("could not check sender's certificate (%s):\n %v", errRunPub, errsPub.String())
+		return nil, nil, fmt.Errorf("could not check sender's certificate (%w):\n %v", errRunPub, stdErrPub.String())
 	}
 
-	// Compare string results - PEM format is base64 encoded and this way no reflection is needed.
-	if string(outPriv.Bytes()) != string(outPub.Bytes()) {
+	// Compare string results - PEM format is base64 encoded and this way no reflection is needed
+	if stdOutPriv.String() != stdOutPub.String() {
 		return nil, nil, fmt.Errorf("private key and certificate of sender do not match")
 	}
 
@@ -203,17 +206,17 @@ func PrepareEncryptionKeys(
 ) ([][]byte, error) {
 
 	// Prepare memory
-	var err error
 	keys := make([][]byte, 0, len(encryptionKeys))
 
 	// Go through the recipient certificates, convert them to PEM format if needed and save them to temporary files
 	for _, encryptionKey := range encryptionKeys {
 
-		// Check whether the certificate and key are already in PEM format, and try to convert them if not
+		// Check whether the certificate is already in PEM format, and try to convert it if not
 		if block, _ := pem.Decode(encryptionKey); block == nil {
-			encryptionKey, err = CertToPem(pathOpenssl, encryptionKey)
-			if err != nil {
-				return nil, fmt.Errorf("recipient certificate: %s", err)
+			var errEncryptionKey error
+			encryptionKey, errEncryptionKey = CertToPem(pathOpenssl, encryptionKey)
+			if errEncryptionKey != nil {
+				return nil, fmt.Errorf("recipient certificate: %w", errEncryptionKey)
 			}
 		}
 		keys = append(keys, encryptionKey)
@@ -247,18 +250,18 @@ func SignMessage(
 	cmd.Stdin = bytes.NewBuffer(message)
 
 	// Create the needed buffers
-	var out, errs bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errs
+	var stdOut, stdErr bytes.Buffer
+	cmd.Stdout = &stdOut
+	cmd.Stderr = &stdErr
 
 	// Run command
 	errRun := cmd.Run()
 	if errRun != nil {
-		return nil, fmt.Errorf("could not sign message (%s):\n %v", errRun, errs.String())
+		return nil, fmt.Errorf("could not sign message (%s):\n %v", errRun, stdErr.String())
 	}
 
 	// Return output
-	return out.Bytes(), nil
+	return stdOut.Bytes(), nil
 }
 
 // EncryptMessage calls OpenSsl to SMIME encrypt the given message
@@ -305,16 +308,16 @@ func EncryptMessage(
 	cmd.Stdin = bytes.NewReader(mailMessage)
 
 	// Create the needed buffers
-	var out, errs bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errs
+	var stdOut, stdErr bytes.Buffer
+	cmd.Stdout = &stdOut
+	cmd.Stderr = &stdErr
 
 	// Actually run the encryption
-	err := cmd.Run()
-	if err != nil {
-		return nil, fmt.Errorf("could not encrypt message (%s):\n %v", err, errs.String())
+	errRun := cmd.Run()
+	if errRun != nil {
+		return nil, fmt.Errorf("could not encrypt message (%w):\n %v", errRun, stdErr.String())
 	}
 
 	// Return output
-	return out.Bytes(), nil
+	return stdOut.Bytes(), nil
 }

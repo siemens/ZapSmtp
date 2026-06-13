@@ -1,7 +1,7 @@
 /*
 * ZapSmtp, a Zap (Golang) logger extension for sending urgent log messages via SMTP
 *
-* Copyright (c) Siemens AG, 2025.
+* Copyright (c) Siemens AG, 2021-2026.
 *
 * This work is licensed under the terms of the MIT license. For a copy, see the LICENSE file in the top-level
 * directory or visit <https://opensource.org/licenses/MIT>.
@@ -41,6 +41,15 @@ type Mailer struct {
 	pathSignatureKey  string // path to the signature key of sender. Can be omitted if no signature is desired.
 }
 
+// NewMailer constructs a new mailer with basic configuration.
+// Detailed configuration needs to be set using the methods on Mailer.
+func NewMailer(smtpServer string, smtpPort uint16) *Mailer {
+	return &Mailer{
+		smtpServer: smtpServer,
+		smtpPort:   smtpPort,
+	}
+}
+
 // SetAuth can be used to set SMTP authentication
 func (mailer *Mailer) SetAuth(username string, password string) {
 	mailer.smtpUser = username
@@ -64,7 +73,7 @@ func (mailer *Mailer) SetOpenssl(path string) error {
 	return nil
 }
 
-// SetSignature can be used to set the signature certificates for MIME messag signing
+// SetSignature can be used to set the signature certificates for MIME message signing
 func (mailer *Mailer) SetSignature(signatureCert []byte, signatureKey []byte) error {
 
 	// Check if OpenSSL is set
@@ -78,22 +87,22 @@ func (mailer *Mailer) SetSignature(signatureCert []byte, signatureKey []byte) er
 	}
 
 	// Convert signature certificate and key if necessary
-	var err error
-	signatureCert, signatureKey, err = openssl.PrepareSignatureKeys(mailer.pathOpenssl, signatureCert, signatureKey)
-	if err != nil {
-		return fmt.Errorf("could not prepare signature certificate and key: %s", err)
+	var errPrepare error
+	signatureCert, signatureKey, errPrepare = openssl.PrepareSignatureKeys(mailer.pathOpenssl, signatureCert, signatureKey)
+	if errPrepare != nil {
+		return fmt.Errorf("could not prepare signature certificate and key: %w", errPrepare)
 	}
 
 	// Write signing certificate to disk, where it can be used by OpenSSL
 	pathSignatureCert, errPathSignatureCert := SaveToTemp(signatureCert, "openssl-signature-cert-*.pem")
 	if errPathSignatureCert != nil {
-		return fmt.Errorf("could not prepare signature certificate: %s", errPathSignatureCert)
+		return fmt.Errorf("could not prepare signature certificate: %w", errPathSignatureCert)
 	}
 
 	// Write signing key to disk, where it can be used by OpenSSL
 	pathSignatureKey, errPathSignatureKey := SaveToTemp(signatureKey, "openssl-signature-key-*.pem")
 	if errPathSignatureKey != nil {
-		return fmt.Errorf("could not prepare signature key: %s", errPathSignatureKey)
+		return fmt.Errorf("could not prepare signature key: %w", errPathSignatureKey)
 	}
 
 	// Set signature certificate. Needs to be put into temporary file later, which
@@ -123,10 +132,10 @@ func (mailer *Mailer) Send(msg *Message) error {
 		}
 
 		// Convert encryption certificates if necessary
-		var err error
-		msg.EncCerts, err = openssl.PrepareEncryptionKeys(mailer.pathOpenssl, msg.EncCerts)
-		if err != nil {
-			return fmt.Errorf("could not prepare encryption key: %s", err)
+		var errPrepareEnc error
+		msg.EncCerts, errPrepareEnc = openssl.PrepareEncryptionKeys(mailer.pathOpenssl, msg.EncCerts)
+		if errPrepareEnc != nil {
+			return fmt.Errorf("could not prepare encryption key: %w", errPrepareEnc)
 		}
 
 		// Write encryption keys to disk, where it can be used by OpenSSL
@@ -135,15 +144,19 @@ func (mailer *Mailer) Send(msg *Message) error {
 			// Write certificate to disk
 			pathEncryptionCert, errPathEncryptionCert := SaveToTemp(encryptionCert, "openssl-encryption-cert-*.pem")
 			if errPathEncryptionCert != nil {
-				return fmt.Errorf("could not prepare encryption key: %s", errPathEncryptionCert)
+				return fmt.Errorf("could not prepare encryption key: %w", errPathEncryptionCert)
 			}
 
-			// Cleanup temporary file on return
-			defer func() { _ = os.Remove(pathEncryptionCert) }()
-
-			// Remember path
+			// Remember path and register cleanup
 			pathEncryptionCerts = append(pathEncryptionCerts, pathEncryptionCert)
 		}
+
+		// Cleanup temporary encryption certificate files on return
+		defer func() {
+			for _, p := range pathEncryptionCerts {
+				_ = os.Remove(p)
+			}
+		}()
 	}
 
 	// Build mail message
@@ -169,7 +182,7 @@ func (mailer *Mailer) Send(msg *Message) error {
 		// Sign message
 		msgSigned, errSign := openssl.SignMessage(mailer.pathOpenssl, mailer.pathSignatureCert, mailer.pathSignatureKey, message)
 		if errSign != nil {
-			return fmt.Errorf("could not sign message: %s", errSign)
+			return fmt.Errorf("could not sign message: %w", errSign)
 		}
 
 		// Address OpenSSL bug
@@ -194,7 +207,7 @@ func (mailer *Mailer) Send(msg *Message) error {
 		var errEnc error
 		message, errEnc = openssl.EncryptMessage(mailer.pathOpenssl, msg.From.Address, recipientAddr, msgSubject, message, pathEncryptionCerts)
 		if errEnc != nil {
-			return fmt.Errorf("could not encrypt message: %s", errEnc)
+			return fmt.Errorf("could not encrypt message: %w", errEnc)
 		}
 	}
 
@@ -204,22 +217,16 @@ func (mailer *Mailer) Send(msg *Message) error {
 		auth = smtp.PlainAuth("", mailer.smtpUser, mailer.smtpPassword, mailer.smtpServer)
 	}
 
-	// Prepare some header values
-	messageRecipients := make([]string, len(msg.To))
-	for i, r := range msg.To {
-		messageRecipients[i] = r.Address
-	}
-
 	// Connect to the server, authenticate, set the sender and recipient and send the email all in one step.
 	errSend := smtp.SendMail(
 		fmt.Sprintf("%s:%d", mailer.smtpServer, mailer.smtpPort),
 		auth,
 		msg.From.Address,
-		messageRecipients,
+		recipientAddr,
 		message,
 	)
 	if errSend != nil {
-		return fmt.Errorf("could not send mail: %s", errSend)
+		return fmt.Errorf("could not send mail: %w", errSend)
 	}
 
 	// Return nil as everything went fine
@@ -230,13 +237,4 @@ func (mailer *Mailer) Send(msg *Message) error {
 func (mailer *Mailer) Close() {
 	_ = os.Remove(mailer.pathSignatureCert)
 	_ = os.Remove(mailer.pathSignatureKey)
-}
-
-// NewMailer constructs a new mailer with basic configuration.
-// Detailed configuration needs to be set using the methods on Mailer.
-func NewMailer(smtpServer string, smtpPort uint16) *Mailer {
-	return &Mailer{
-		smtpServer: smtpServer,
-		smtpPort:   smtpPort,
-	}
 }
