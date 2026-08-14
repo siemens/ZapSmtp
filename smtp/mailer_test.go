@@ -11,9 +11,17 @@
 package smtp
 
 import (
+	"bufio"
+	"bytes"
+	"io"
+	"net"
 	"net/mail"
+	"net/textproto"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/siemens/ZapSmtp/_test"
 )
@@ -251,6 +259,128 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 	}
 }
 
+// TestMailer_Send_AcceptedMessageLogsQuitErrorWithoutFailing verifies that a cleanup error after SMTP acceptance
+// is reported locally without marking the delivered message as failed
+func TestMailer_Send_AcceptedMessageLogsQuitErrorWithoutFailing(t *testing.T) {
+
+	// Start a real local SMTP connection that accepts the message before rejecting QUIT
+	smtpHost, smtpPort, chMessage, chServer := test_startSmtpServer(t, true, true)
+
+	// Prepare a plain message that does not require external certificates or credentials
+	mailer := NewMailer(smtpHost, smtpPort)
+	message, errMessage := NewMessage(
+		mail.Address{Name: "Sender", Address: "sender@domain.tld"},
+		[]mail.Address{{Name: "Recipient", Address: "recipient@domain.tld"}},
+		"Test subject",
+		[]byte("Test body"),
+	)
+	if errMessage != nil {
+		t.Errorf("NewMessage() error = '%v', want = nil", errMessage)
+		return
+	}
+
+	// Capture the local cleanup warning without changing the logger integration
+	stderrOriginal := os.Stderr
+	stderrReader, stderrWriter, errPipe := os.Pipe()
+	if errPipe != nil {
+		t.Errorf("os.Pipe() error = '%v', want = nil", errPipe)
+		return
+	}
+	os.Stderr = stderrWriter
+	t.Cleanup(func() {
+		os.Stderr = stderrOriginal
+		_ = stderrReader.Close()
+		_ = stderrWriter.Close()
+	})
+
+	// Send the message through the full SMTP transaction
+	errSend := mailer.Send(message)
+	os.Stderr = stderrOriginal
+	_ = stderrWriter.Close()
+	stderrOutput, errStderrOutput := io.ReadAll(stderrReader)
+	if errStderrOutput != nil {
+		t.Errorf("io.ReadAll() error = '%v', want = nil", errStderrOutput)
+		return
+	}
+
+	// Verify the accepted message is not reported as a delivery failure
+	if errSend != nil {
+		t.Errorf("Mailer.Send() error = '%v', want = nil", errSend)
+		return
+	}
+
+	// Verify the server received the original message exactly once
+	select {
+	case messageReceived := <-chMessage:
+		if !bytes.Contains(messageReceived, []byte("Test body")) {
+			t.Errorf("Mailer.Send() message = '%s', want to contain = 'Test body'", messageReceived)
+			return
+		}
+	case <-time.After(time.Second * 2):
+		t.Error("Mailer.Send() message was not received, want one accepted message")
+		return
+	}
+
+	// Verify the harmless post-send failure remains visible locally
+	if !strings.Contains(string(stderrOutput), "Could not close SMTP session after the message was accepted") {
+		t.Errorf("Mailer.Send() stderr = '%s', want cleanup warning", stderrOutput)
+		return
+	}
+
+	// Verify the local SMTP session itself completed without an infrastructure error
+	select {
+	case errServer := <-chServer:
+		if errServer != nil {
+			t.Errorf("SMTP test server error = '%v', want = nil", errServer)
+			return
+		}
+	case <-time.After(time.Second * 2):
+		t.Error("SMTP test server did not stop, want completed session")
+		return
+	}
+}
+
+// TestMailer_Send_RejectedMessageReturnsError verifies that failures before SMTP acceptance remain delivery errors
+func TestMailer_Send_RejectedMessageReturnsError(t *testing.T) {
+
+	// Start a real local SMTP connection that rejects the message transfer
+	smtpHost, smtpPort, _, chServer := test_startSmtpServer(t, false, false)
+
+	// Prepare a plain message that does not require external certificates or credentials
+	mailer := NewMailer(smtpHost, smtpPort)
+	message, errMessage := NewMessage(
+		mail.Address{Name: "Sender", Address: "sender@domain.tld"},
+		[]mail.Address{{Name: "Recipient", Address: "recipient@domain.tld"}},
+		"Test subject",
+		[]byte("Test body"),
+	)
+	if errMessage != nil {
+		t.Errorf("NewMessage() error = '%v', want = nil", errMessage)
+		return
+	}
+
+	// Send the message through the rejected SMTP transaction
+	errSend := mailer.Send(message)
+
+	// Verify the pre-delivery failure remains visible to the retrying caller
+	if errSend == nil {
+		t.Error("Mailer.Send() error = nil, want delivery error")
+		return
+	}
+
+	// Verify the local SMTP session itself completed without an infrastructure error
+	select {
+	case errServer := <-chServer:
+		if errServer != nil {
+			t.Errorf("SMTP test server error = '%v', want = nil", errServer)
+			return
+		}
+	case <-time.After(time.Second * 2):
+		t.Error("SMTP test server did not stop, want completed session")
+		return
+	}
+}
+
 // TestSendMail_WithAttachment_SendsOrRejects verifies that SendMail correctly handles file attachments
 // with various signing and encryption configurations
 func TestSendMail_WithAttachment_SendsOrRejects(t *testing.T) {
@@ -433,4 +563,124 @@ func TestSendMail_WithAttachment_SendsOrRejects(t *testing.T) {
 			}
 		})
 	}
+}
+
+// test_startSmtpServer starts a local SMTP server with configurable delivery and cleanup outcomes
+func test_startSmtpServer(t *testing.T, acceptMessage bool, quitError bool) (string, uint16, <-chan []byte, <-chan error) {
+
+	// Mark failures at the caller and listen only on the local loopback interface
+	t.Helper()
+	listener, errListener := net.Listen("tcp", "127.0.0.1:0")
+	if errListener != nil {
+		t.Errorf("net.Listen() error = '%v', want = nil", errListener)
+		return "", 0, nil, nil
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	// Resolve the dynamically assigned port for the mailer
+	host, portRaw, errAddress := net.SplitHostPort(listener.Addr().String())
+	if errAddress != nil {
+		t.Errorf("net.SplitHostPort() error = '%v', want = nil", errAddress)
+		return "", 0, nil, nil
+	}
+	port, errPort := strconv.ParseUint(portRaw, 10, 16)
+	if errPort != nil {
+		t.Errorf("strconv.ParseUint() error = '%v', want = nil", errPort)
+		return "", 0, nil, nil
+	}
+
+	// Serve one complete SMTP transaction on the real TCP connection
+	chMessage := make(chan []byte, 1)
+	chServer := make(chan error, 1)
+	go func() {
+		connection, errConnection := listener.Accept()
+		if errConnection != nil {
+			chServer <- errConnection
+			return
+		}
+		defer func() { _ = connection.Close() }()
+
+		// Prepare line-oriented SMTP protocol handling
+		reader := textproto.NewReader(bufio.NewReader(connection))
+		writer := bufio.NewWriter(connection)
+		writeResponse := func(response string) error {
+			_, errWrite := writer.WriteString(response + "\r\n")
+			if errWrite != nil {
+				return errWrite
+			}
+
+			// Flush each response because the client waits before continuing
+			return writer.Flush()
+		}
+
+		// Greet the client before receiving SMTP commands
+		if errGreeting := writeResponse("220 localhost ESMTP ready"); errGreeting != nil {
+			chServer <- errGreeting
+			return
+		}
+
+		// Handle the minimal SMTP command set needed by net/smtp
+		for {
+			command, errCommand := reader.ReadLine()
+			if errCommand != nil {
+				chServer <- errCommand
+				return
+			}
+
+			switch {
+			case strings.HasPrefix(command, "EHLO "), strings.HasPrefix(command, "HELO "):
+				if errHello := writeResponse("250 localhost"); errHello != nil {
+					chServer <- errHello
+					return
+				}
+			case strings.HasPrefix(command, "MAIL FROM:"), strings.HasPrefix(command, "RCPT TO:"):
+				if errRecipient := writeResponse("250 OK"); errRecipient != nil {
+					chServer <- errRecipient
+					return
+				}
+			case command == "DATA":
+				if !acceptMessage {
+					if errRejected := writeResponse("451 message rejected"); errRejected != nil {
+						chServer <- errRejected
+						return
+					}
+					chServer <- nil
+					return
+				}
+				if errDataStart := writeResponse("354 End data with <CR><LF>.<CR><LF>"); errDataStart != nil {
+					chServer <- errDataStart
+					return
+				}
+				messageReceived, errMessageReceived := reader.ReadDotBytes()
+				if errMessageReceived != nil {
+					chServer <- errMessageReceived
+					return
+				}
+				chMessage <- messageReceived
+				if errAccepted := writeResponse("250 queued"); errAccepted != nil {
+					chServer <- errAccepted
+					return
+				}
+			case command == "QUIT":
+				quitResponse := "221 goodbye"
+				if quitError {
+					quitResponse = "451 cleanup unavailable"
+				}
+				if errQuit := writeResponse(quitResponse); errQuit != nil {
+					chServer <- errQuit
+					return
+				}
+				chServer <- nil
+				return
+			default:
+				if errUnknown := writeResponse("500 unsupported command"); errUnknown != nil {
+					chServer <- errUnknown
+					return
+				}
+			}
+		}
+	}()
+
+	// Return the listener details and observation channels
+	return host, uint16(port), chMessage, chServer
 }

@@ -12,6 +12,7 @@ package smtp
 
 import (
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"mime"
@@ -211,20 +212,8 @@ func (mailer *Mailer) Send(msg *Message) error {
 		}
 	}
 
-	// Set authentication if desired
-	var auth smtp.Auth
-	if len(mailer.smtpUser) > 0 && len(mailer.smtpPassword) > 0 {
-		auth = smtp.PlainAuth("", mailer.smtpUser, mailer.smtpPassword, mailer.smtpServer)
-	}
-
-	// Connect to the server, authenticate, set the sender and recipient and send the email all in one step.
-	errSend := smtp.SendMail(
-		fmt.Sprintf("%s:%d", mailer.smtpServer, mailer.smtpPort),
-		auth,
-		msg.From.Address,
-		recipientAddr,
-		message,
-	)
+	// Send the message while distinguishing delivery errors from later session cleanup errors
+	errSend := mailer.sendMessage(msg.From.Address, recipientAddr, message)
 	if errSend != nil {
 		return fmt.Errorf("could not send mail: %w", errSend)
 	}
@@ -237,4 +226,71 @@ func (mailer *Mailer) Send(msg *Message) error {
 func (mailer *Mailer) Close() {
 	_ = os.Remove(mailer.pathSignatureCert)
 	_ = os.Remove(mailer.pathSignatureKey)
+}
+
+// sendMessage runs the SMTP transaction and treats a message as delivered after the server accepts its DATA
+func (mailer *Mailer) sendMessage(mailFrom string, mailRecipients []string, message []byte) error {
+
+	// Connect to the configured SMTP server
+	client, errClient := smtp.Dial(fmt.Sprintf("%s:%d", mailer.smtpServer, mailer.smtpPort))
+	if errClient != nil {
+		return fmt.Errorf("could not connect to SMTP server: %w", errClient)
+	}
+	defer func() { _ = client.Close() }()
+
+	// Upgrade the connection when the server advertises STARTTLS
+	if supportsStarttls, _ := client.Extension("STARTTLS"); supportsStarttls {
+		tlsConfig := &tls.Config{ServerName: mailer.smtpServer}
+		errStarttls := client.StartTLS(tlsConfig)
+		if errStarttls != nil {
+			return fmt.Errorf("could not start SMTP TLS session: %w", errStarttls)
+		}
+	}
+
+	// Authenticate only when both credentials were configured
+	if len(mailer.smtpUser) > 0 && len(mailer.smtpPassword) > 0 {
+		if authentication, _ := client.Extension("AUTH"); !authentication {
+			return errors.New("SMTP server does not support authentication")
+		}
+		auth := smtp.PlainAuth("", mailer.smtpUser, mailer.smtpPassword, mailer.smtpServer)
+		errAuth := client.Auth(auth)
+		if errAuth != nil {
+			return fmt.Errorf("could not authenticate with SMTP server: %w", errAuth)
+		}
+	}
+
+	// Define the SMTP envelope before transferring the message
+	errFrom := client.Mail(mailFrom)
+	if errFrom != nil {
+		return fmt.Errorf("could not set SMTP sender: %w", errFrom)
+	}
+	for _, mailRecipient := range mailRecipients {
+		errRecipient := client.Rcpt(mailRecipient)
+		if errRecipient != nil {
+			return fmt.Errorf("could not set SMTP recipient '%s': %w", mailRecipient, errRecipient)
+		}
+	}
+
+	// Transfer the message body and wait for the server's acceptance response
+	dataWriter, errDataWriter := client.Data()
+	if errDataWriter != nil {
+		return fmt.Errorf("could not start SMTP message transfer: %w", errDataWriter)
+	}
+	_, errWrite := dataWriter.Write(message)
+	if errWrite != nil {
+		return fmt.Errorf("could not write SMTP message: %w", errWrite)
+	}
+	errDataClose := dataWriter.Close()
+	if errDataClose != nil {
+		return fmt.Errorf("could not submit SMTP message: %w", errDataClose)
+	}
+
+	// Report session cleanup errors locally without retrying an already accepted message
+	errQuit := client.Quit()
+	if errQuit != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "ZapSMTP: Could not close SMTP session after the message was accepted: %v\n", errQuit)
+	}
+
+	// Return nil because the SMTP server accepted the message
+	return nil
 }
