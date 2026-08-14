@@ -11,41 +11,40 @@ by deploying, configuring and maintaining additional log management software.
 
 ### Installation
 As Golang only supports plain text SMTP mails natively, _OpenSSL_ has to be installed if encryption and/or signature is
-to be enabled. Other than that a simple `go get` is sufficient.
+to be enabled. Other than that a simple `go get` is sufficient. ZapSmtp requires Go 1.23 or newer. This lets the delayed
+logger rely on the safer synchronous timer channel semantics introduced with Go 1.23. Forcing legacy asynchronous timer
+channels through `GODEBUG=asynctimerchan=1`, `GODEBUG=asynctimerchan=2`, or an equivalent `godebug` default is unsupported.
 
 ### Usage
 Because sending out a new mail for every single log message is not desirable in most cases, it is recommended to use
 some kind of buffered logger core. For this the `DelayedCore` provided in this package can be used.
 
-Don't forget to clean up the Smtp writeSyncer on exit!
+Temporary attachment and certificate files are created only for an individual send and removed automatically.
 
 ```go
-func Exmaple() {
+func Example() {
 
     // Prepare SMTP writeSyncer
-    smtpWriteSyncer, fnCleanup, errSmtpWriteSyncer := ZapSmtp.NewSmtpSyncer(
+    smtpWriteSyncer, errSmtpWriteSyncer := ZapSmtp.NewSmtpSyncer(
         conf.Server,
         conf.Port,
+        conf.Username,            // Leave username and password empty to skip authentication
+        conf.Password,
+
         conf.Subject,
         conf.Sender,              // mail.Address structs for the sender
         conf.Recipients,          // mail.Address structs for each recipient
+        true,                     // Also attach the collected logs as a text file
+
         conf.OpensslPath,         // Can be omitted, if no e-mail signature nor encryption is desired
         conf.SignatureCertPath,   // Can be omitted, if no e-mail signature is desired
         conf.SignatureKeyPath,    // Can be omitted, if no e-mail signature is desired
         conf.EncryptionCertPaths, // Can be omitted, if no e-mail encryption is desired
     )
     if errSmtpWriteSyncer != nil {
-          fmt.Printf("Initializing SMTP writeSyncer failed: %s\n", errSmtpWriteSyncer)
+        fmt.Printf("Initializing SMTP writeSyncer failed: %s\n", errSmtpWriteSyncer)
         return
     }
-
-    // Cleanup SMTP writeSyncer (if you are using it with signature or encryption). 
-	// OpenSSL can only receive one argument via Stdin, which is the message. Other arguments, such as 
-	// signature or encryption keys must be passed as file paths in a PEM format. The SMTP writeSyncer 
-	// prepares the necessary files as temporary files in the required format and uses them throughout 
-	// its lifetime. You are responsible for cleaning them up on exit, Zap logger cannot not take care 
-	// of that automatically!
-    defer func() { _ = fnCleanup() }()
 
     // Define the encoder
     encoder := zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
@@ -88,5 +87,9 @@ You can also visit [Large-Scale Discovery](https://github.com/siemens/large-scal
 ### Best practices
 - As encrypting and signing mails via _OpenSSL_ is slow it is recommended to not send logs too frequently. This depends
   heavily on your use case though.
+- SMTP transactions and OpenSSL commands are limited to 30 seconds so stalled external services cannot block logging
+  indefinitely.
+- `DelayedCore` retains at most 5,000 log entries. When delivery remains unavailable, additional entries are dropped
+  and the condition is reported locally on stderr with rate limiting.
 - Email signature and encryption needs certificate and key files in PEM format. The `writeSyncer`
   also allows for DER format but will convert them internally. It's advised though to use PEM format if possible.

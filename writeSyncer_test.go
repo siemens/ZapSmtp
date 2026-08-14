@@ -11,13 +11,59 @@
 package ZapSmtp
 
 import (
+	"bytes"
 	"net/mail"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/siemens/ZapSmtp/_test"
 )
+
+// TestSmtpSyncer_prepareAttachment_FlagControlsSafeTempFile verifies optional attachments use a safe file name
+func TestSmtpSyncer_prepareAttachment_FlagControlsSafeTempFile(t *testing.T) {
+
+	// Prepare payload and a subject containing characters that are invalid in Windows file names
+	payload := []byte("sensitive log payload")
+	syncer := &SmtpSyncer{mailSubject: `Alert: / \\ * ? " < > |`}
+
+	// Verify disabling attachments avoids creating any temporary file
+	pathDisabled, errPathDisabled := syncer.prepareAttachment(payload)
+	if errPathDisabled != nil {
+		t.Errorf("prepareAttachment() error = '%v', want = nil", errPathDisabled)
+		return
+	}
+	if pathDisabled != "" {
+		t.Errorf("prepareAttachment() path = '%s', want = ''", pathDisabled)
+		return
+	}
+
+	// Verify enabling attachments creates a safely named temporary file
+	syncer.attachAsFile = true
+	pathEnabled, errPathEnabled := syncer.prepareAttachment(payload)
+	if errPathEnabled != nil {
+		t.Errorf("prepareAttachment() error = '%v', want = nil", errPathEnabled)
+		return
+	}
+	defer func() { _ = os.Remove(pathEnabled) }()
+	if fileName := filepath.Base(pathEnabled); !strings.HasPrefix(fileName, "zapsmtp-log-") || !strings.HasSuffix(fileName, ".txt") {
+		t.Errorf("prepareAttachment() file name = '%s', want safe zapsmtp-log-*.txt name", fileName)
+		return
+	}
+
+	// Verify the temporary attachment contains the original payload
+	attachment, errAttachment := os.ReadFile(pathEnabled)
+	if errAttachment != nil {
+		t.Errorf("os.ReadFile() error = '%v', want = nil", errAttachment)
+		return
+	}
+	if !bytes.Equal(attachment, payload) {
+		t.Errorf("prepareAttachment() payload = '%s', want = '%s'", attachment, payload)
+		return
+	}
+}
 
 // Unfortunately testing the correct sending of mails is not that easy and relies on manual labor. The correctness can
 // only be reviewed manually

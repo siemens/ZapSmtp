@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
@@ -99,20 +100,24 @@ func (message *Message) Message() ([]byte, error) {
 	writer := multipart.NewWriter(&buf)
 	boundary := writer.Boundary()
 
-	// Write headers
+	// Format all recipients for the To header
 	toStrs := make([]string, len(message.To))
 	for i, r := range message.To {
 		toStrs[i] = r.String()
 	}
 
+	// Prevent header injection before encoding the subject
+	subjectSanitized := strings.NewReplacer("\r", " ", "\n", " ").Replace(message.Subject)
+	subjectEncoded := mime.QEncoding.Encode("utf-8", subjectSanitized)
+
 	// Write headers
-	buf.WriteString(fmt.Sprintf("From: %s\r\n", message.From.String()))
-	buf.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(toStrs, ", ")))
-	buf.WriteString(fmt.Sprintf("Subject: %s\r\n", mime.QEncoding.Encode("utf-8", strings.NewReplacer("\r", " ", "\n", " ").Replace(message.Subject))))
-	buf.WriteString(fmt.Sprintf("Date: %s\r\n", time.Now().Format(time.RFC1123Z)))
-	buf.WriteString(fmt.Sprintf("MIME-Version: 1.0\r\n"))
-	buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%s\r\n", boundary))
-	buf.WriteString("\r\n")
+	_, _ = buf.WriteString("From: " + message.From.String() + "\r\n")
+	_, _ = buf.WriteString("To: " + strings.Join(toStrs, ", ") + "\r\n")
+	_, _ = buf.WriteString("Subject: " + subjectEncoded + "\r\n")
+	_, _ = buf.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
+	_, _ = buf.WriteString("MIME-Version: 1.0\r\n")
+	_, _ = buf.WriteString("Content-Type: multipart/mixed; boundary=" + boundary + "\r\n")
+	_, _ = buf.WriteString("\r\n")
 
 	// Determine Content-Type for body
 	var contentType string
@@ -155,12 +160,10 @@ func (message *Message) Message() ([]byte, error) {
 		if errPartWriter != nil {
 			return nil, fmt.Errorf("could not create attachment part for '%s': %w", filename, errPartWriter)
 		}
-		b64Writer := base64.NewEncoder(base64.StdEncoding, partWriter)
-		if _, errWrite := b64Writer.Write(content); errWrite != nil {
-			_ = b64Writer.Close()
+		errWrite := writeBase64Lines(partWriter, content)
+		if errWrite != nil {
 			return nil, fmt.Errorf("could not write attachment part for '%s': %w", filename, errWrite)
 		}
-		_ = b64Writer.Close()
 	}
 
 	// Ensure boundary is properly closed
@@ -185,4 +188,34 @@ func NewMessage(
 		rawMessage:     mailMessage,
 		rawAttachments: make(map[string][]byte),
 	}, nil
+}
+
+// writeBase64Lines encodes content using MIME-compatible lines of at most 76 characters.
+func writeBase64Lines(writer io.Writer, content []byte) error {
+
+	// Encode in memory because attachments are already retained as complete byte slices
+	encoded := make([]byte, base64.StdEncoding.EncodedLen(len(content)))
+	base64.StdEncoding.Encode(encoded, content)
+
+	// Write each MIME line and separate it from the next line with CRLF
+	for len(encoded) > 0 {
+		lineLength := 76
+		if len(encoded) < lineLength {
+			lineLength = len(encoded)
+		}
+		_, errWrite := writer.Write(encoded[:lineLength])
+		if errWrite != nil {
+			return errWrite
+		}
+		encoded = encoded[lineLength:]
+		if len(encoded) > 0 {
+			_, errLineBreak := writer.Write([]byte("\r\n"))
+			if errLineBreak != nil {
+				return errLineBreak
+			}
+		}
+	}
+
+	// Return nil as everything went fine
+	return nil
 }

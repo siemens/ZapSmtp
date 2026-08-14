@@ -16,13 +16,18 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"net"
 	"net/smtp"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/siemens/ZapSmtp/openssl"
 )
+
+const defaultSmtpTimeout = time.Second * 30
 
 var ErrInvalidOpensslPath = errors.New("invalid OpenSSL path")
 var ErrInvalidSigCert = errors.New("invalid signature certificate or key")
@@ -31,6 +36,7 @@ var ErrInvalidEncCerts = errors.New("invalid encryption certificates")
 type Mailer struct {
 	smtpServer string
 	smtpPort   uint16
+	timeout    time.Duration
 
 	// Authentication details (optional)
 	smtpUser     string
@@ -48,6 +54,7 @@ func NewMailer(smtpServer string, smtpPort uint16) *Mailer {
 	return &Mailer{
 		smtpServer: smtpServer,
 		smtpPort:   smtpPort,
+		timeout:    defaultSmtpTimeout,
 	}
 }
 
@@ -190,14 +197,14 @@ func (mailer *Mailer) Send(msg *Message) error {
 		// OpenSSL tries to be helpful by converting \n to CRLF (\r\n), because email standards (RFC 5322, MIME) expect it.
 		// If input already uses Windows line endings (\r\n), OpenSSL might insert extra \r, resulting in \r\r\n or worse.
 		// This breaks Outlook and other S/MIME-compliant mail readers, because the structure becomes malformed.
-		msgSigned = bytes.Replace(msgSigned, []byte("\r\r\n"), []byte("\r\n"), -1)
+		msgSigned = bytes.ReplaceAll(msgSigned, []byte("\r\r\n"), []byte("\r\n"))
 
 		// Prepare signed message with required headers (some got removed by OpenSSL)
 		var msgSignedPrefixed bytes.Buffer
-		msgSignedPrefixed.WriteString(fmt.Sprintf("From: %s\r\n", msg.From.String()))
-		msgSignedPrefixed.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(recipientStr, ", ")))
-		msgSignedPrefixed.WriteString(fmt.Sprintf("Subject: %s\r\n", mime.QEncoding.Encode("utf-8", msgSubject)))
-		msgSignedPrefixed.Write(msgSigned)
+		_, _ = msgSignedPrefixed.WriteString("From: " + msg.From.String() + "\r\n")
+		_, _ = msgSignedPrefixed.WriteString("To: " + strings.Join(recipientStr, ", ") + "\r\n")
+		_, _ = msgSignedPrefixed.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", msgSubject) + "\r\n")
+		_, _ = msgSignedPrefixed.Write(msgSigned)
 
 		// Assign signed message
 		message = msgSignedPrefixed.Bytes()
@@ -231,10 +238,25 @@ func (mailer *Mailer) Close() {
 // sendMessage runs the SMTP transaction and treats a message as delivered after the server accepts its DATA
 func (mailer *Mailer) sendMessage(mailFrom string, mailRecipients []string, message []byte) error {
 
-	// Connect to the configured SMTP server
-	client, errClient := smtp.Dial(fmt.Sprintf("%s:%d", mailer.smtpServer, mailer.smtpPort))
+	// Connect with a bounded dial and an IPv6-safe address
+	smtpAddress := net.JoinHostPort(mailer.smtpServer, strconv.Itoa(int(mailer.smtpPort)))
+	connection, errConnection := net.DialTimeout("tcp", smtpAddress, mailer.timeout)
+	if errConnection != nil {
+		return fmt.Errorf("could not connect to SMTP server: %w", errConnection)
+	}
+
+	// Bound the complete SMTP transaction, including greeting, TLS, DATA, and QUIT
+	errDeadline := connection.SetDeadline(time.Now().Add(mailer.timeout))
+	if errDeadline != nil {
+		_ = connection.Close()
+		return fmt.Errorf("could not set SMTP connection deadline: %w", errDeadline)
+	}
+
+	// Initialize the SMTP protocol after the deadline is active
+	client, errClient := smtp.NewClient(connection, mailer.smtpServer)
 	if errClient != nil {
-		return fmt.Errorf("could not connect to SMTP server: %w", errClient)
+		_ = connection.Close()
+		return fmt.Errorf("could not initialize SMTP session: %w", errClient)
 	}
 	defer func() { _ = client.Close() }()
 

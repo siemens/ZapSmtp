@@ -112,7 +112,7 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 			smtpPassword:    _test.SmtpPassword,
 			mailSubject:     _test.MailSubject,
 			mailFrom:        _test.MailFrom,
-			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			mailRecipients:  []mail.Address{{Name: "Test", Address: _test.RealRecipient.Address}},
 			pathOpenssl:     _test.OpensslPath,
 			signatureCert:   sigCert,
 			signatureKey:    sigKey,
@@ -126,7 +126,7 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 			smtpPassword:    _test.SmtpPassword,
 			mailSubject:     "",
 			mailFrom:        _test.MailFrom,
-			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			mailRecipients:  []mail.Address{{Name: "Test", Address: _test.RealRecipient.Address}},
 			pathOpenssl:     _test.OpensslPath,
 			signatureCert:   sigCert,
 			signatureKey:    sigKey,
@@ -140,21 +140,24 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 			smtpPassword:    _test.SmtpPassword,
 			mailSubject:     _test.MailSubject + " (signed and optionally encrypted, no content inside)",
 			mailFrom:        _test.MailFrom,
-			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			mailRecipients:  []mail.Address{{Name: "Test", Address: _test.RealRecipient.Address}},
 			pathOpenssl:     _test.OpensslPath,
 			signatureCert:   sigCert,
 			signatureKey:    sigKey,
 			encryptionCerts: toCerts,
 		}},
 		{name: "valid-multiple-recipients", args: args{
-			message:         []byte("valid email, signed and encrypted, sent to multiple recipients"),
-			smtpServer:      _test.SmtpServer,
-			smtpPort:        _test.SmtpPort,
-			smtpUser:        _test.SmtpUser,
-			smtpPassword:    _test.SmtpPassword,
-			mailSubject:     _test.MailSubject,
-			mailFrom:        _test.MailFrom,
-			mailRecipients:  []mail.Address{{"Test 1", _test.RealRecipient.Address}, {_test.MailTo.Name, _test.MailTo.Address}},
+			message:      []byte("valid email, signed and encrypted, sent to multiple recipients"),
+			smtpServer:   _test.SmtpServer,
+			smtpPort:     _test.SmtpPort,
+			smtpUser:     _test.SmtpUser,
+			smtpPassword: _test.SmtpPassword,
+			mailSubject:  _test.MailSubject,
+			mailFrom:     _test.MailFrom,
+			mailRecipients: []mail.Address{
+				{Name: "Test 1", Address: _test.RealRecipient.Address},
+				{Name: _test.MailTo.Name, Address: _test.MailTo.Address},
+			},
 			pathOpenssl:     _test.OpensslPath,
 			signatureCert:   sigCert,
 			signatureKey:    sigKey,
@@ -168,7 +171,7 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 			smtpPassword:    _test.SmtpPassword,
 			mailSubject:     _test.MailSubject,
 			mailFrom:        _test.MailFrom,
-			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			mailRecipients:  []mail.Address{{Name: "Test", Address: _test.RealRecipient.Address}},
 			pathOpenssl:     _test.OpensslPath,
 			signatureCert:   nil,
 			signatureKey:    nil,
@@ -182,7 +185,7 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 			smtpPassword:    _test.SmtpPassword,
 			mailSubject:     _test.MailSubject,
 			mailFrom:        _test.MailFrom,
-			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			mailRecipients:  []mail.Address{{Name: "Test", Address: _test.RealRecipient.Address}},
 			pathOpenssl:     _test.OpensslPath,
 			signatureCert:   sigCert,
 			signatureKey:    sigKey,
@@ -196,7 +199,7 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 			smtpPassword:    _test.SmtpPassword,
 			mailSubject:     _test.MailSubject,
 			mailFrom:        _test.MailFrom,
-			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			mailRecipients:  []mail.Address{{Name: "Test", Address: _test.RealRecipient.Address}},
 			signatureCert:   nil,
 			signatureKey:    nil,
 			encryptionCerts: nil,
@@ -210,7 +213,7 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 			smtpPassword:    _test.SmtpPassword,
 			mailSubject:     _test.MailSubject,
 			mailFrom:        _test.MailFrom,
-			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			mailRecipients:  []mail.Address{{Name: "Test", Address: _test.RealRecipient.Address}},
 			pathOpenssl:     _test.OpensslPath,
 			signatureCert:   nil,
 			signatureKey:    nil,
@@ -223,8 +226,8 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 			smtpUser:        _test.SmtpUser,
 			smtpPassword:    _test.SmtpPassword,
 			mailSubject:     _test.MailSubject,
-			mailFrom:        mail.Address{"Test", "notexisting@domian.tld"},
-			mailRecipients:  []mail.Address{{"Test", _test.RealRecipient.Address}},
+			mailFrom:        mail.Address{Name: "Test", Address: "notexisting@domian.tld"},
+			mailRecipients:  []mail.Address{{Name: "Test", Address: _test.RealRecipient.Address}},
 			pathOpenssl:     _test.OpensslPath,
 			signatureCert:   nil,
 			signatureKey:    nil,
@@ -264,7 +267,7 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 func TestMailer_Send_AcceptedMessageLogsQuitErrorWithoutFailing(t *testing.T) {
 
 	// Start a real local SMTP connection that accepts the message before rejecting QUIT
-	smtpHost, smtpPort, chMessage, chServer := test_startSmtpServer(t, true, true)
+	smtpHost, smtpPort, chMessage, chServer := test_startSmtpServer(t, true, true, 0)
 
 	// Prepare a plain message that does not require external certificates or credentials
 	mailer := NewMailer(smtpHost, smtpPort)
@@ -340,11 +343,61 @@ func TestMailer_Send_AcceptedMessageLogsQuitErrorWithoutFailing(t *testing.T) {
 	}
 }
 
+// TestMailer_Send_LargeLogAttachmentRespectsSmtpLineLimit verifies that a large log body and attachment are accepted
+// by an SMTP server enforcing the RFC 2821 data-line limit
+func TestMailer_Send_LargeLogAttachmentRespectsSmtpLineLimit(t *testing.T) {
+
+	// Start a real local SMTP connection that reproduces the production server's line-length rejection
+	const smtpMaxDataLineLength = 998
+	smtpHost, smtpPort, chMessage, chServer := test_startSmtpServer(t, true, false, smtpMaxDataLineLength)
+
+	// Prepare a message whose body and attachment would exceed the limit without transfer-encoding line folding
+	mailer := NewMailer(smtpHost, smtpPort)
+	message, errMessage := NewMessage(
+		mail.Address{Name: "Sender", Address: "sender@domain.tld"},
+		[]mail.Address{{Name: "Recipient", Address: "recipient@domain.tld"}},
+		"Large logger message",
+		bytes.Repeat([]byte("log-entry-content "), 200),
+	)
+	if errMessage != nil {
+		t.Errorf("NewMessage() error = '%v', want = nil", errMessage)
+		return
+	}
+	message.rawAttachments["zapsmtp-log.txt"] = bytes.Repeat([]byte("attachment-content-"), 200)
+
+	// Send the message through the complete SMTP transaction
+	errSend := mailer.Send(message)
+
+	// Verify the server accepted the RFC-compliant message instead of returning its line-length error
+	if errSend != nil {
+		t.Errorf("Mailer.Send() error = '%v', want = nil", errSend)
+		return
+	}
+	select {
+	case <-chMessage:
+	case <-time.After(time.Second * 2):
+		t.Error("Mailer.Send() message was not received, want one accepted message")
+		return
+	}
+
+	// Verify the local SMTP session itself completed without an infrastructure error
+	select {
+	case errServer := <-chServer:
+		if errServer != nil {
+			t.Errorf("SMTP test server error = '%v', want = nil", errServer)
+			return
+		}
+	case <-time.After(time.Second * 2):
+		t.Error("SMTP test server did not stop, want completed session")
+		return
+	}
+}
+
 // TestMailer_Send_RejectedMessageReturnsError verifies that failures before SMTP acceptance remain delivery errors
 func TestMailer_Send_RejectedMessageReturnsError(t *testing.T) {
 
 	// Start a real local SMTP connection that rejects the message transfer
-	smtpHost, smtpPort, _, chServer := test_startSmtpServer(t, false, false)
+	smtpHost, smtpPort, _, chServer := test_startSmtpServer(t, false, false, 0)
 
 	// Prepare a plain message that does not require external certificates or credentials
 	mailer := NewMailer(smtpHost, smtpPort)
@@ -377,6 +430,42 @@ func TestMailer_Send_RejectedMessageReturnsError(t *testing.T) {
 		}
 	case <-time.After(time.Second * 2):
 		t.Error("SMTP test server did not stop, want completed session")
+		return
+	}
+}
+
+// TestMailer_Send_StalledServerReturnsTimeout verifies that a silent SMTP peer cannot block delivery indefinitely
+func TestMailer_Send_StalledServerReturnsTimeout(t *testing.T) {
+
+	// Start a server that accepts TCP but delays its SMTP greeting beyond the configured timeout
+	smtpHost, smtpPort := test_startStalledSmtpServer(t, time.Millisecond*300)
+
+	// Prepare a mailer with a short deterministic timeout
+	mailer := NewMailer(smtpHost, smtpPort)
+	mailer.timeout = time.Millisecond * 40
+	message, errMessage := NewMessage(
+		mail.Address{Name: "Sender", Address: "sender@domain.tld"},
+		[]mail.Address{{Name: "Recipient", Address: "recipient@domain.tld"}},
+		"Timeout",
+		[]byte("Body"),
+	)
+	if errMessage != nil {
+		t.Errorf("NewMessage() error = '%v', want = nil", errMessage)
+		return
+	}
+
+	// Send and measure the stalled transaction
+	startedAt := time.Now()
+	errSend := mailer.Send(message)
+	duration := time.Since(startedAt)
+
+	// Verify the timeout interrupts the SMTP greeting promptly
+	if errSend == nil {
+		t.Error("Mailer.Send() error = nil, want timeout error")
+		return
+	}
+	if duration >= time.Millisecond*200 {
+		t.Errorf("Mailer.Send() duration = '%v', want < '200ms'", duration)
 		return
 	}
 }
@@ -423,7 +512,6 @@ func TestSendMail_WithAttachment_SendsOrRejects(t *testing.T) {
 
 	// Prepare certificate paths
 	var toCerts [][]byte
-	var toCertsDouble [][]byte
 	if len(_test.RealCertPath) > 0 {
 
 		// Read encryption certificate bytes
@@ -433,8 +521,6 @@ func TestSendMail_WithAttachment_SendsOrRejects(t *testing.T) {
 			return
 		}
 		toCerts = append(toCerts, data)
-		toCertsDouble = append(toCertsDouble, data)
-		toCertsDouble = append(toCertsDouble, data)
 	}
 
 	// Prepare test cases
@@ -565,8 +651,28 @@ func TestSendMail_WithAttachment_SendsOrRejects(t *testing.T) {
 	}
 }
 
+// test_messageExceedsLineLength reports whether a message contains a data line longer than the configured limit
+func test_messageExceedsLineLength(message []byte, maxLineLength int) bool {
+
+	// Inspect normalized message lines without counting their CRLF terminators
+	for _, messageLine := range bytes.Split(message, []byte("\n")) {
+		messageLine = bytes.TrimSuffix(messageLine, []byte("\r"))
+		if len(messageLine) > maxLineLength {
+			return true
+		}
+	}
+
+	// Confirm all message lines fit within the configured limit
+	return false
+}
+
 // test_startSmtpServer starts a local SMTP server with configurable delivery and cleanup outcomes
-func test_startSmtpServer(t *testing.T, acceptMessage bool, quitError bool) (string, uint16, <-chan []byte, <-chan error) {
+func test_startSmtpServer(
+	t *testing.T,
+	acceptMessage bool,
+	quitError bool,
+	maxDataLineLength int,
+) (string, uint16, <-chan []byte, <-chan error) {
 
 	// Mark failures at the caller and listen only on the local loopback interface
 	t.Helper()
@@ -656,6 +762,14 @@ func test_startSmtpServer(t *testing.T, acceptMessage bool, quitError bool) (str
 					chServer <- errMessageReceived
 					return
 				}
+				if maxDataLineLength > 0 && test_messageExceedsLineLength(messageReceived, maxDataLineLength) {
+					if errLineLength := writeResponse("500 Line length exceeded. See RFC 2821 #4.5.3.1."); errLineLength != nil {
+						chServer <- errLineLength
+						return
+					}
+					chServer <- nil
+					return
+				}
 				chMessage <- messageReceived
 				if errAccepted := writeResponse("250 queued"); errAccepted != nil {
 					chServer <- errAccepted
@@ -683,4 +797,42 @@ func test_startSmtpServer(t *testing.T, acceptMessage bool, quitError bool) (str
 
 	// Return the listener details and observation channels
 	return host, uint16(port), chMessage, chServer
+}
+
+// test_startStalledSmtpServer starts a local TCP server that intentionally delays its SMTP greeting
+func test_startStalledSmtpServer(t *testing.T, delay time.Duration) (string, uint16) {
+
+	// Listen only on the local loopback interface
+	t.Helper()
+	listener, errListener := net.Listen("tcp", "127.0.0.1:0")
+	if errListener != nil {
+		t.Errorf("net.Listen() error = '%v', want = nil", errListener)
+		return "", 0
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	// Resolve the dynamically assigned port for the mailer
+	host, portRaw, errAddress := net.SplitHostPort(listener.Addr().String())
+	if errAddress != nil {
+		t.Errorf("net.SplitHostPort() error = '%v', want = nil", errAddress)
+		return "", 0
+	}
+	port, errPort := strconv.ParseUint(portRaw, 10, 16)
+	if errPort != nil {
+		t.Errorf("strconv.ParseUint() error = '%v', want = nil", errPort)
+		return "", 0
+	}
+
+	// Accept one connection and keep it silent longer than the client timeout
+	go func() {
+		connection, errConnection := listener.Accept()
+		if errConnection != nil {
+			return
+		}
+		defer func() { _ = connection.Close() }()
+		time.Sleep(delay)
+	}()
+
+	// Return the listener details
+	return host, uint16(port)
 }

@@ -12,12 +12,15 @@ package openssl
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/siemens/ZapSmtp/_test"
 )
@@ -600,5 +603,37 @@ func TestEncryptMessage_VariousInputs_EncryptsOrRejects(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRunCommand_HangingProcessReturnsTimeout verifies that external OpenSSL commands have a bounded runtime
+func TestRunCommand_HangingProcessReturnsTimeout(t *testing.T) {
+
+	// Run the current test binary in a helper mode that intentionally blocks
+	_, _, errRun := runCommand(
+		os.Args[0],
+		nil,
+		time.Millisecond*40,
+		"-test.run=TestRunCommandHelper",
+		"--",
+		"openssl-timeout-helper",
+	)
+
+	// Verify the command is terminated with the canonical timeout error
+	if !errors.Is(errRun, context.DeadlineExceeded) {
+		t.Errorf("runCommand() error = '%v', want = '%v'", errRun, context.DeadlineExceeded)
+		return
+	}
+}
+
+// TestRunCommandHelper provides a portable child process that can intentionally block
+func TestRunCommandHelper(t *testing.T) {
+
+	// Sleep only when this test was launched explicitly as the timeout helper process
+	for _, argument := range os.Args {
+		if argument == "openssl-timeout-helper" {
+			time.Sleep(time.Second * 10)
+			return
+		}
 	}
 }

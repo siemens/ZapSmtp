@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"net/mail"
 	"os"
-	"strings"
 
 	"github.com/siemens/ZapSmtp/openssl"
 	"github.com/siemens/ZapSmtp/smtp"
@@ -192,14 +191,18 @@ func (s *SmtpSyncer) Write(p []byte) (int, error) {
 		return 0, nil
 	}
 
-	// Write signing certificate to disk, where it can be used by OpenSSL
-	pathAttachment, errPathAttachment := smtp.SaveToTemp(p, strings.ReplaceAll(strings.ToLower(s.mailSubject), " ", "_")+"_*.txt")
+	// Prepare the optional attachment with a safe subject-independent name
+	pathAttachment, errPathAttachment := s.prepareAttachment(p)
 	if errPathAttachment != nil {
 		return 0, errPathAttachment
 	}
 
-	// Cleanup temporary file on return
-	defer func() { _ = os.Remove(pathAttachment) }()
+	// Register cleanup and pass the optional path to the mail helper
+	var pathAttachments []string
+	if pathAttachment != "" {
+		defer func() { _ = os.Remove(pathAttachment) }()
+		pathAttachments = []string{pathAttachment}
+	}
 
 	// Send mail with log data
 	errSend := smtp.SendMail(
@@ -212,7 +215,7 @@ func (s *SmtpSyncer) Write(p []byte) (int, error) {
 		s.encryptionCerts, // One encryption certificate per recipient
 		s.mailSubject,
 		p,
-		[]string{pathAttachment}, // List of file paths to attach
+		pathAttachments,
 		s.pathOpenssl,
 		s.signatureCert,
 		s.signatureKey,
@@ -228,4 +231,22 @@ func (s *SmtpSyncer) Write(p []byte) (int, error) {
 
 func (s *SmtpSyncer) Sync() error {
 	return nil // Writes are sent out immediately, nothing to sync
+}
+
+// prepareAttachment writes the payload to a safely named temporary file when attachments are enabled.
+func (s *SmtpSyncer) prepareAttachment(payload []byte) (string, error) {
+
+	// Avoid persisting log data when the caller disabled attachments
+	if !s.attachAsFile {
+		return "", nil
+	}
+
+	// Use a static safe pattern because the subject may contain file-system control characters
+	pathAttachment, errPathAttachment := smtp.SaveToTemp(payload, "zapsmtp-log-*.txt")
+	if errPathAttachment != nil {
+		return "", fmt.Errorf("could not prepare log attachment: %w", errPathAttachment)
+	}
+
+	// Return the temporary path for sending and cleanup
+	return pathAttachment, nil
 }

@@ -12,11 +12,16 @@ package ZapSmtp
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
 )
+
+const maxBufferedEntries = 5000         // Maximum number of retained log entries
+const errorReportInterval = time.Minute // Minimum interval between local background error reports
 
 // signal is sent from Write to the background goroutine to deliver a log message or request a flush.
 type signal struct {
@@ -54,9 +59,14 @@ func NewDelayedCore(
 	delayPriority time.Duration,
 ) (*DelayedCore, error) {
 
-	// Validate input to avoid accidental misconfiguration
+	// Reject non-positive durations because they would create immediate retry loops
+	if delay <= 0 || delayPriority <= 0 {
+		return nil, fmt.Errorf("delays must be greater than zero")
+	}
+
+	// Keep priority delivery at least as fast as standard delivery
 	if delay < delayPriority {
-		return nil, fmt.Errorf("priority delay lower than standard delay")
+		return nil, fmt.Errorf("priority delay must not exceed standard delay")
 	}
 
 	// Initialize delayed core
@@ -77,56 +87,116 @@ func NewDelayedCore(
 	return core, nil
 }
 
-// run is the background goroutine that owns all timer, queue, and flush logic. It waits for signals from Write
-// and Sync, manages the flush timer, and retries failed flushes with a short backoff.
+// run serializes every queue, timer, and flush transition for all cores sharing chSignal.
+// A successful flush releases the complete batch and stops the timer. A failed flush retains the complete batch and
+// schedules one next attempt; later failures can continue retrying, but only one timer is active at any time.
 func (c *DelayedCore) run() {
 
-	// Message queues are owned exclusively by this goroutine, no mutex needed
-	var messages []*buffer.Buffer
+	// Keep priority and standard entries separate so the output remains grouped by urgency
+	var messagesStandard []*buffer.Buffer
 	var messagesPriority []*buffer.Buffer
 
-	// Timer state is owned exclusively by this goroutine, no mutex needed
+	// Keep a disabled select channel when no delivery is scheduled
 	var timer *time.Timer
-	var timerStartedAt time.Time
-	var hasPriority = false
-
-	// Prepare channel for the timer signal.
-	// As long as this channel is nil, no timer is active and no sync is planned
 	var chTimer <-chan time.Time
+	var timerDeadline time.Time
 
-	// flush writes all queued messages to the output and clears the queues.
+	// Rate-limit the two independent classes of local background warnings
+	var lastFlushErrorReport time.Time
+	var lastCacheErrorReport time.Time
+
+	// Disable future delivery after a successful flush
+	// Go 1.23 guarantees that Stop leaves no stale timer value available to receive.
+	stopTimer := func() {
+		if timer != nil {
+			_ = timer.Stop()
+		}
+		chTimer = nil
+		timerDeadline = time.Time{}
+	}
+
+	// Start or move the single timer used for initial delivery and retries
+	// Go 1.23 permits Reset on an active, stopped, or expired timer without first draining its channel.
+	scheduleTimer := func(duration time.Duration) {
+		deadline := time.Now().Add(duration)
+		if timer == nil {
+			timer = time.NewTimer(duration)
+		} else {
+			_ = timer.Reset(duration)
+		}
+		chTimer = timer.C
+		timerDeadline = deadline
+	}
+
+	// Report background failures locally without recursively using the affected logger
+	reportError := func(lastReport *time.Time, message string, err error) {
+		now := time.Now()
+		if !lastReport.IsZero() && now.Sub(*lastReport) < errorReportInterval {
+			return
+		}
+		*lastReport = now
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "ZapSMTP: %s: %q\n", message, err.Error())
+			return
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "ZapSMTP: %s\n", message)
+	}
+
+	// Count retained entries without duplicating queue state
+	messageCount := func() int {
+		return len(messagesPriority) + len(messagesStandard)
+	}
+
+	// Drop the newest non-priority entry first so a critical entry can remain retryable
+	dropNewestBuffered := func() {
+		if len(messagesStandard) > 0 {
+			last := len(messagesStandard) - 1
+			messagesStandard[last].Free()
+			messagesStandard[last] = nil
+			messagesStandard = messagesStandard[:last]
+			return
+		}
+		last := len(messagesPriority) - 1
+		messagesPriority[last].Free()
+		messagesPriority[last] = nil
+		messagesPriority = messagesPriority[:last]
+	}
+
+	// Flush the complete batch while retaining ownership of every buffer until Write and Sync both succeed
 	flush := func() error {
 
 		// Return if there are no buffered messages
-		if len(messagesPriority) == 0 && len(messages) == 0 {
+		if len(messagesPriority) == 0 && len(messagesStandard) == 0 {
 			return nil
 		}
 
 		// Combine the priority and standard messages prepended with a nice header
-		msg := make([]byte, 0, 1024*(len(messagesPriority)+len(messages)))
+		payload := make([]byte, 0, 1024*(len(messagesPriority)+len(messagesStandard)))
 
 		// Append priority messages
 		if len(messagesPriority) > 0 {
-			msg = append(msg, []byte("=== Priority Log ===\n")...)
+			payload = append(payload, []byte("=== Priority Log ===\n")...)
 			for _, buf := range messagesPriority {
-				msg = append(msg, buf.Bytes()...)
+				payload = append(payload, buf.Bytes()...)
 			}
-			msg = append(msg, []byte("\n")...)
-			msg = append(msg, []byte("\n")...)
+			payload = append(payload, []byte("\n\n")...)
 		}
 
 		// Append standard messages
-		if len(messages) > 0 {
-			msg = append(msg, []byte("=== Standard Log ===\n")...)
-			for _, buf := range messages {
-				msg = append(msg, buf.Bytes()...)
+		if len(messagesStandard) > 0 {
+			payload = append(payload, []byte("=== Standard Log ===\n")...)
+			for _, buf := range messagesStandard {
+				payload = append(payload, buf.Bytes()...)
 			}
 		}
 
-		// Write message
-		_, errWrite := c.writeSyncer.Write(msg)
+		// Write the aggregate and reject incomplete writer contracts
+		written, errWrite := c.writeSyncer.Write(payload)
 		if errWrite != nil {
 			return errWrite
+		}
+		if written != len(payload) {
+			return io.ErrShortWrite
 		}
 
 		// Sync out to make sure messages are written (might be an empty function depending on writeSyncer)
@@ -136,19 +206,33 @@ func (c *DelayedCore) run() {
 		}
 
 		// Free buffers only after a successful write
-		for _, buf := range messagesPriority {
+		for i, buf := range messagesPriority {
 			buf.Free()
+			messagesPriority[i] = nil
 		}
-		for _, buf := range messages {
+		for i, buf := range messagesStandard {
 			buf.Free()
+			messagesStandard[i] = nil
 		}
 
-		// Clear the slices after a successful write but keep the allocated memory
+		// Clear the slices without retaining references to buffers returned to zap's pool
 		messagesPriority = messagesPriority[:0]
-		messages = messages[:0]
+		messagesStandard = messagesStandard[:0]
 
 		// Return nil as everything went fine
 		return nil
+	}
+
+	// Apply the same timer invariant after every explicit, threshold, or timed flush attempt
+	finishFlush := func(errFlush error, reportBackgroundError bool) {
+		if errFlush == nil {
+			stopTimer()
+			return
+		}
+		if reportBackgroundError {
+			reportError(&lastFlushErrorReport, "Could not flush delayed logs", errFlush)
+		}
+		scheduleTimer(c.delayPriority)
 	}
 
 	// Keep looping to observe messages and handle timed syncs
@@ -156,71 +240,59 @@ func (c *DelayedCore) run() {
 		select {
 		case sig := <-c.chSignal:
 
-			// Queue the message if one was delivered
+			// Distinguish pure queueing, explicit Sync, and critical entries requesting an immediate flush
+			flushRequested := sig.chFlushResult != nil
+			criticalEntry := sig.entryEncoded != nil && flushRequested
+
+			// Queue the message while enforcing a hard entry limit
+			entryQueued := false
 			if sig.entryEncoded != nil {
-				if sig.entryPriority {
+				if messageCount() >= maxBufferedEntries && criticalEntry {
+					dropNewestBuffered()
+					reportError(&lastCacheErrorReport, "Delayed log cache is full. Dropping newest buffered entry to retain a critical entry.", nil)
+				}
+				if messageCount() >= maxBufferedEntries {
+					sig.entryEncoded.Free()
+					reportError(&lastCacheErrorReport, "Delayed log cache is full. Dropping newest entry.", nil)
+				} else if sig.entryPriority {
 					messagesPriority = append(messagesPriority, sig.entryEncoded)
+					entryQueued = true
 				} else {
-					messages = append(messages, sig.entryEncoded)
+					messagesStandard = append(messagesStandard, sig.entryEncoded)
+					entryQueued = true
 				}
 			}
 
 			// Handle immediate flush requests (from Sync or critical log levels)
-			if sig.chFlushResult != nil {
+			if flushRequested {
 
-				// Flush
+				// Flush and complete the timer transition before unblocking the caller
 				errFlush := flush()
-
-				// Return flush result to the caller
+				finishFlush(errFlush, false)
 				sig.chFlushResult <- errFlush
 
-				// Reset the timer state on success.
-				// Keep it otherwise, so that retries are handled by the expiring timer.
-				if errFlush == nil {
-					hasPriority = false
-					timerStartedAt = time.Time{}
-					if timer != nil {
-						timer.Stop()
-						chTimer = nil
-					}
-				}
-
 				// Listen for next case
 				continue
 			}
 
-			// Flush immediately if SMTP delivery might not be guaranteed anymore
-			if len(messages)+len(messagesPriority) >= 5000 {
+			// Flush at the hard cache limit instead of retaining a larger batch
+			if entryQueued && messageCount() == maxBufferedEntries {
 
-				// Flush
+				// Flush once and retain one retry timer if delivery is unavailable
 				errFlush := flush()
-
-				// Reset the timer state on success.
-				// Keep it otherwise, so that retries are handled by the expiring timer.
-				if errFlush == nil {
-					hasPriority = false
-					timerStartedAt = time.Time{}
-					if timer != nil {
-						timer.Stop()
-						chTimer = nil
-					}
-				}
+				finishFlush(errFlush, true)
 
 				// Listen for next case
 				continue
 			}
 
-			// Shorten a remaining delay if this is the first priority message while a timer is already running.
-			// A negative remaining duration is clamped to zero to trigger immediately.
-			if chTimer != nil && !hasPriority && sig.entryPriority {
+			// Let a priority entry shorten an active delivery or retry deadline, but never postpone it
+			if entryQueued && chTimer != nil && sig.entryPriority {
 
-				// Set priority mode
-				hasPriority = true
-
-				// Shorten timer if it has more time remaining than delayPriority
-				remaining := timerStartedAt.Add(c.delay).Sub(time.Now())
-				if remaining > c.delayPriority {
-					timer.Reset(c.delayPriority)
+				// Shorten the current deadline without postponing an earlier retry
+				priorityDeadline := time.Now().Add(c.delayPriority)
+				if priorityDeadline.Before(timerDeadline) {
+					scheduleTimer(c.delayPriority)
 				}
 
 				// Listen for next case
@@ -228,30 +300,16 @@ func (c *DelayedCore) run() {
 			}
 
 			// Start a new timer if none is running
-			if chTimer == nil {
-
-				// Set timer start timestamp
-				timerStartedAt = time.Now()
-
-				// Set priority mode if necessary
-				hasPriority = sig.entryPriority
+			if entryQueued && chTimer == nil {
 
 				// Decide timer duration
 				duration := c.delay
-				if hasPriority {
+				if sig.entryPriority {
 					duration = c.delayPriority
 				}
 
-				// Create or set timer.
-				// The timer is reused, it only needs to be set the first time
-				if timer == nil {
-					timer = time.NewTimer(duration)
-				} else {
-					timer.Reset(duration)
-				}
-
-				// Set the timer channel to trigger syncs
-				chTimer = timer.C
+				// Schedule the initial delivery
+				scheduleTimer(duration)
 
 				// Listen for next case
 				continue
@@ -259,24 +317,9 @@ func (c *DelayedCore) run() {
 
 		case <-chTimer:
 
-			// Flush all queued messages
+			// Flush all queued messages and preserve the one-timer invariant for any retry
 			errFlush := flush()
-
-			// In case of error retry after some delay
-			if errFlush != nil {
-
-				// Reset timer
-				timerStartedAt = time.Now()
-				timer.Reset(c.delayPriority)
-
-				// Listen for next case
-				continue
-			}
-
-			// Reset state, because we just flushed successfully
-			hasPriority = false
-			timerStartedAt = time.Time{}
-			chTimer = nil
+			finishFlush(errFlush, true)
 		}
 	}
 }

@@ -12,13 +12,17 @@ package openssl
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+const defaultCommandTimeout = time.Second * 30
 
 // CertToPem returns the certificate in DER format to PEM format, it fails if the input is in any other encoding.
 func CertToPem(pathOpenssl string, cert []byte) ([]byte, error) {
@@ -55,26 +59,22 @@ func CertToPem(pathOpenssl string, cert []byte) ([]byte, error) {
 		return nil, fmt.Errorf("could not sync temp file: %w", errFlush)
 	}
 
-	// Try to transform the certificate from DER to PEM format
-	cmd := exec.Command(pathOpenssl, "x509",
+	// Transform the certificate from DER to PEM with a bounded command runtime
+	stdOut, stdErr, errRun := runCommand(
+		pathOpenssl,
+		nil,
+		defaultCommandTimeout,
+		"x509",
 		"-inform", "der",
 		"-in", tmpFile.Name(),
 		"-outform", "pem",
 	)
-
-	// Create the needed buffers
-	var stdOut, stdErr bytes.Buffer
-	cmd.Stdout = &stdOut
-	cmd.Stderr = &stdErr
-
-	// Run command
-	errRun := cmd.Run()
 	if errRun != nil {
-		return nil, fmt.Errorf("could not convert certificate to PEM format (%w):\n %v", errRun, stdErr.String())
+		return nil, fmt.Errorf("could not convert certificate to PEM format (%w):\n %v", errRun, string(stdErr))
 	}
 
 	// Return output
-	return stdOut.Bytes(), nil
+	return stdOut, nil
 }
 
 // KeyToPem returns the key in DER format to PEM format, it fails if the input is in any other encoding.
@@ -109,26 +109,22 @@ func KeyToPem(pathOpenssl string, key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("could not sync temp file: %w", errFlush)
 	}
 
-	// Try to transform the key from DER to PEM format
-	cmd := exec.Command(pathOpenssl, "pkey",
+	// Transform the key from DER to PEM with a bounded command runtime
+	stdOut, stdErr, errRun := runCommand(
+		pathOpenssl,
+		nil,
+		defaultCommandTimeout,
+		"pkey",
 		"-inform", "der",
 		"-in", tmpFile.Name(),
 		"-outform", "pem",
 	)
-
-	// Create the needed buffers
-	var stdOut, stdErr bytes.Buffer
-	cmd.Stdout = &stdOut
-	cmd.Stderr = &stdErr
-
-	// Run command
-	errRun := cmd.Run()
 	if errRun != nil {
-		return nil, fmt.Errorf("could not convert key to PEM format (%w):\n %v", errRun, stdErr.String())
+		return nil, fmt.Errorf("could not convert key to PEM format (%w):\n %v", errRun, string(stdErr))
 	}
 
 	// Return output
-	return stdOut.Bytes(), nil
+	return stdOut, nil
 }
 
 // PrepareSignatureKeys converts the sender's key pair to PEM if necessary and verifies that they are a
@@ -157,39 +153,37 @@ func PrepareSignatureKeys(
 		}
 	}
 
-	// Check whether the private key and the public key match. Otherwise, any validation of the signature would fail.
-	// First create a matching public key for the private key
-	cmd := exec.Command(pathOpenssl, "pkey", "-pubout", "-outform", "pem")
-	cmd.Stdin = bytes.NewReader(signatureKey)
-
-	// Create the needed buffers
-	var stdOutPriv, stdErrPriv bytes.Buffer
-	cmd.Stdout = &stdOutPriv
-	cmd.Stderr = &stdErrPriv
-
-	// Run command
-	errRunPriv := cmd.Run()
+	// Derive a public key from the private key with a bounded command runtime
+	stdOutPriv, stdErrPriv, errRunPriv := runCommand(
+		pathOpenssl,
+		signatureKey,
+		defaultCommandTimeout,
+		"pkey",
+		"-pubout",
+		"-outform",
+		"pem",
+	)
 	if errRunPriv != nil {
-		return nil, nil, fmt.Errorf("could not check sender's private key (%w):\n %v", errRunPriv, stdErrPriv.String())
+		return nil, nil, fmt.Errorf("could not check sender's private key (%w):\n %v", errRunPriv, string(stdErrPriv))
 	}
 
-	// Secondly read the public key from the certificate
-	cmd = exec.Command(pathOpenssl, "x509", "-pubkey", "-noout", "-outform", "pem")
-	cmd.Stdin = bytes.NewReader(signatureCert)
-
-	// Create the needed buffers
-	var stdOutPub, stdErrPub bytes.Buffer
-	cmd.Stdout = &stdOutPub
-	cmd.Stderr = &stdErrPub
-
-	// Run command
-	errRunPub := cmd.Run()
+	// Read the public key from the certificate with the same command bound
+	stdOutPub, stdErrPub, errRunPub := runCommand(
+		pathOpenssl,
+		signatureCert,
+		defaultCommandTimeout,
+		"x509",
+		"-pubkey",
+		"-noout",
+		"-outform",
+		"pem",
+	)
 	if errRunPub != nil {
-		return nil, nil, fmt.Errorf("could not check sender's certificate (%w):\n %v", errRunPub, stdErrPub.String())
+		return nil, nil, fmt.Errorf("could not check sender's certificate (%w):\n %v", errRunPub, string(stdErrPub))
 	}
 
 	// Compare string results - PEM format is base64 encoded and this way no reflection is needed
-	if stdOutPriv.String() != stdOutPub.String() {
+	if !bytes.Equal(stdOutPriv, stdOutPub) {
 		return nil, nil, fmt.Errorf("private key and certificate of sender do not match")
 	}
 
@@ -242,26 +236,22 @@ func SignMessage(
 		return nil, fmt.Errorf("message is empty")
 	}
 
-	// Create the command for signing the message
-	cmd := exec.Command(pathOpenssl, "smime", "-sign",
+	// Sign the message with a bounded command runtime
+	stdOut, stdErr, errRun := runCommand(
+		pathOpenssl,
+		message,
+		defaultCommandTimeout,
+		"smime",
+		"-sign",
 		"-signer", pathSignatureCert,
 		"-inkey", pathSignatureKey,
 	)
-	cmd.Stdin = bytes.NewBuffer(message)
-
-	// Create the needed buffers
-	var stdOut, stdErr bytes.Buffer
-	cmd.Stdout = &stdOut
-	cmd.Stderr = &stdErr
-
-	// Run command
-	errRun := cmd.Run()
 	if errRun != nil {
-		return nil, fmt.Errorf("could not sign message (%s):\n %v", errRun, stdErr.String())
+		return nil, fmt.Errorf("could not sign message (%w):\n %v", errRun, string(stdErr))
 	}
 
 	// Return output
-	return stdOut.Bytes(), nil
+	return stdOut, nil
 }
 
 // EncryptMessage calls OpenSsl to SMIME encrypt the given message
@@ -304,20 +294,45 @@ func EncryptMessage(
 		"-aes256",
 	}
 	args = append(args, pathEncryptionCerts...)
-	cmd := exec.Command(pathOpenssl, args...)
-	cmd.Stdin = bytes.NewReader(mailMessage)
 
-	// Create the needed buffers
-	var stdOut, stdErr bytes.Buffer
-	cmd.Stdout = &stdOut
-	cmd.Stderr = &stdErr
-
-	// Actually run the encryption
-	errRun := cmd.Run()
+	// Encrypt the message with a bounded command runtime
+	stdOut, stdErr, errRun := runCommand(pathOpenssl, mailMessage, defaultCommandTimeout, args...)
 	if errRun != nil {
-		return nil, fmt.Errorf("could not encrypt message (%w):\n %v", errRun, stdErr.String())
+		return nil, fmt.Errorf("could not encrypt message (%w):\n %v", errRun, string(stdErr))
 	}
 
 	// Return output
-	return stdOut.Bytes(), nil
+	return stdOut, nil
+}
+
+// runCommand executes an OpenSSL command with a bounded runtime and isolated output buffers.
+func runCommand(
+	path string,
+	input []byte,
+	timeout time.Duration,
+	arguments ...string,
+) ([]byte, []byte, error) {
+
+	// Bound the process lifetime so a hung executable cannot block logging indefinitely
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, path, arguments...)
+	if input != nil {
+		command.Stdin = bytes.NewReader(input)
+	}
+
+	// Capture both streams for the caller's contextual error message
+	var stdOut bytes.Buffer
+	var stdErr bytes.Buffer
+	command.Stdout = &stdOut
+	command.Stderr = &stdErr
+
+	// Prefer the canonical context error when the process exceeded its deadline
+	errRun := command.Run()
+	if ctx.Err() != nil {
+		return stdOut.Bytes(), stdErr.Bytes(), fmt.Errorf("OpenSSL command timed out: %w", ctx.Err())
+	}
+
+	// Return the command result and captured streams
+	return stdOut.Bytes(), stdErr.Bytes(), errRun
 }
