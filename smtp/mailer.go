@@ -245,15 +245,20 @@ func (mailer *Mailer) sendMessage(mailFrom string, mailRecipients []string, mess
 		return fmt.Errorf("could not connect to SMTP server: %w", errConnection)
 	}
 
-	// Bound the complete SMTP transaction, including greeting, TLS, DATA, and QUIT
-	errDeadline := connection.SetDeadline(time.Now().Add(mailer.timeout))
+	// Wrap the connection so each successful read or write refreshes the deadline. This turns the fixed transaction
+	// timeout into an inactivity timeout: a large but steadily progressing transfer, such as a big DATA payload,
+	// keeps going, while a genuinely stalled peer still fails after the configured timeout.
+	idleConn := &idleTimeoutConn{Conn: connection, timeout: mailer.timeout}
+
+	// Arm an initial deadline so a peer that never sends its greeting still fails within the timeout
+	errDeadline := idleConn.SetDeadline(time.Now().Add(mailer.timeout))
 	if errDeadline != nil {
 		_ = connection.Close()
 		return fmt.Errorf("could not set SMTP connection deadline: %w", errDeadline)
 	}
 
-	// Initialize the SMTP protocol after the deadline is active
-	client, errClient := smtp.NewClient(connection, mailer.smtpServer)
+	// Initialize the SMTP protocol on the idle-timeout connection so all its I/O refreshes the deadline
+	client, errClient := smtp.NewClient(idleConn, mailer.smtpServer)
 	if errClient != nil {
 		_ = connection.Close()
 		return fmt.Errorf("could not initialize SMTP session: %w", errClient)
@@ -315,4 +320,36 @@ func (mailer *Mailer) sendMessage(mailFrom string, mailRecipients []string, mess
 
 	// Return nil because the SMTP server accepted the message
 	return nil
+}
+
+// idleTimeoutConn wraps a net.Conn and refreshes the deadline on every successful read or write. This replaces a
+// single overall transaction deadline with an inactivity timeout, so a large but continuously progressing transfer
+// does not fail prematurely, while a peer that stops making progress still times out after the configured duration.
+type idleTimeoutConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+// Read refreshes the idle deadline before reading, so steady inbound progress keeps the connection alive
+func (c *idleTimeoutConn) Read(b []byte) (int, error) {
+
+	// Refresh the deadline so only a genuine stall trips the timeout
+	if errDeadline := c.Conn.SetDeadline(time.Now().Add(c.timeout)); errDeadline != nil {
+		return 0, errDeadline
+	}
+
+	// Delegate the actual read to the wrapped connection
+	return c.Conn.Read(b)
+}
+
+// Write refreshes the idle deadline before writing, so a large but progressing transfer keeps going
+func (c *idleTimeoutConn) Write(b []byte) (int, error) {
+
+	// Refresh the deadline so only a genuine stall trips the timeout
+	if errDeadline := c.Conn.SetDeadline(time.Now().Add(c.timeout)); errDeadline != nil {
+		return 0, errDeadline
+	}
+
+	// Delegate the actual write to the wrapped connection
+	return c.Conn.Write(b)
 }

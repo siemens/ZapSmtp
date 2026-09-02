@@ -267,7 +267,7 @@ func TestSendMail_VariousConfigurations_SendsOrRejects(t *testing.T) {
 func TestMailer_Send_AcceptedMessageLogsQuitErrorWithoutFailing(t *testing.T) {
 
 	// Start a real local SMTP connection that accepts the message before rejecting QUIT
-	smtpHost, smtpPort, chMessage, chServer := test_startSmtpServer(t, true, true, 0)
+	smtpHost, smtpPort, chMessage, chServer := test_startSmtpServer(t, true, true, 0, 0)
 
 	// Prepare a plain message that does not require external certificates or credentials
 	mailer := NewMailer(smtpHost, smtpPort)
@@ -349,7 +349,7 @@ func TestMailer_Send_LargeLogAttachmentRespectsSmtpLineLimit(t *testing.T) {
 
 	// Start a real local SMTP connection that reproduces the production server's line-length rejection
 	const smtpMaxDataLineLength = 998
-	smtpHost, smtpPort, chMessage, chServer := test_startSmtpServer(t, true, false, smtpMaxDataLineLength)
+	smtpHost, smtpPort, chMessage, chServer := test_startSmtpServer(t, true, false, smtpMaxDataLineLength, 0)
 
 	// Prepare a message whose body and attachment would exceed the limit without transfer-encoding line folding
 	mailer := NewMailer(smtpHost, smtpPort)
@@ -397,7 +397,7 @@ func TestMailer_Send_LargeLogAttachmentRespectsSmtpLineLimit(t *testing.T) {
 func TestMailer_Send_RejectedMessageReturnsError(t *testing.T) {
 
 	// Start a real local SMTP connection that rejects the message transfer
-	smtpHost, smtpPort, _, chServer := test_startSmtpServer(t, false, false, 0)
+	smtpHost, smtpPort, _, chServer := test_startSmtpServer(t, false, false, 0, 0)
 
 	// Prepare a plain message that does not require external certificates or credentials
 	mailer := NewMailer(smtpHost, smtpPort)
@@ -466,6 +466,66 @@ func TestMailer_Send_StalledServerReturnsTimeout(t *testing.T) {
 	}
 	if duration >= time.Millisecond*200 {
 		t.Errorf("Mailer.Send() duration = '%v', want < '200ms'", duration)
+		return
+	}
+}
+
+// TestMailer_Send_SlowButProgressingServerSucceeds verifies that the timeout behaves as an inactivity timeout rather
+// than a hard cap on the whole transaction: a transfer whose total duration exceeds the timeout still succeeds as long
+// as each individual step makes progress within it. This reproduces sending a large report to a slow SMTP peer.
+func TestMailer_Send_SlowButProgressingServerSucceeds(t *testing.T) {
+
+	// Pause before every server response so the transaction outlasts the timeout while each step stays under it
+	const idleTimeout = time.Millisecond * 200
+	const stepDelay = time.Millisecond * 70
+	smtpHost, smtpPort, chMessage, chServer := test_startSmtpServer(t, true, false, 0, stepDelay)
+
+	// Prepare a mailer whose inactivity timeout is shorter than the total transaction time
+	mailer := NewMailer(smtpHost, smtpPort)
+	mailer.timeout = idleTimeout
+	message, errMessage := NewMessage(
+		mail.Address{Name: "Sender", Address: "sender@domain.tld"},
+		[]mail.Address{{Name: "Recipient", Address: "recipient@domain.tld"}},
+		"Slow but progressing",
+		[]byte("Body"),
+	)
+	if errMessage != nil {
+		t.Errorf("NewMessage() error = '%v', want = nil", errMessage)
+		return
+	}
+
+	// Send and measure the deliberately slow transaction
+	startedAt := time.Now()
+	errSend := mailer.Send(message)
+	duration := time.Since(startedAt)
+
+	// Verify the steadily progressing transfer was delivered despite outlasting a single timeout window
+	if errSend != nil {
+		t.Errorf("Mailer.Send() error = '%v', want = nil", errSend)
+		return
+	}
+	if duration <= idleTimeout {
+		t.Errorf("Mailer.Send() duration = '%v', want > '%v' to prove the transaction outlasted one timeout window", duration, idleTimeout)
+		return
+	}
+
+	// Verify the server actually received the message after the slow exchange
+	select {
+	case <-chMessage:
+	case <-time.After(time.Second * 2):
+		t.Error("Mailer.Send() message was not received, want one accepted message")
+		return
+	}
+
+	// Verify the local SMTP session itself completed without an infrastructure error
+	select {
+	case errServer := <-chServer:
+		if errServer != nil {
+			t.Errorf("SMTP test server error = '%v', want = nil", errServer)
+			return
+		}
+	case <-time.After(time.Second * 2):
+		t.Error("SMTP test server did not stop, want completed session")
 		return
 	}
 }
@@ -672,6 +732,7 @@ func test_startSmtpServer(
 	acceptMessage bool,
 	quitError bool,
 	maxDataLineLength int,
+	stepDelay time.Duration, // Pause before each response to emulate a slow but steadily progressing peer
 ) (string, uint16, <-chan []byte, <-chan error) {
 
 	// Mark failures at the caller and listen only on the local loopback interface
@@ -710,6 +771,11 @@ func test_startSmtpServer(
 		reader := textproto.NewReader(bufio.NewReader(connection))
 		writer := bufio.NewWriter(connection)
 		writeResponse := func(response string) error {
+
+			// Pause before responding so the transaction can outlast a single timeout window while still progressing
+			if stepDelay > 0 {
+				time.Sleep(stepDelay)
+			}
 			_, errWrite := writer.WriteString(response + "\r\n")
 			if errWrite != nil {
 				return errWrite
